@@ -22,9 +22,6 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # local.properties Git'e gitmiyor (.gitignore) - secrets'tan build zamanında üretiyoruz.
-      # Her satır bir GitHub Secret'tan geliyor. Eksik bir secret varsa o satır boş kalır,
-      # build kırılmaz ama o kaynak/özellik çalışmaz (örn. MAPS_API_KEY boşsa harita boş gösterir).
       - name: Create local.properties from secrets
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
@@ -47,12 +44,19 @@ jobs:
           GEE_PROJECT_ID=$GEE_PROJECT_ID
           EOF
 
-      # GEE service account JSON'u da Git'e gitmiyor. Bunu tek bir secret olarak
-      # (dosyanın TÜM içeriği, base64 ENCODE EDİLMEDEN, ham JSON metni olarak) saklıyoruz
-      # ve build sırasında assets/ klasörüne yazıyoruz. Eğer secret tanımlı değilse
-      # bu adım dosyayı boş geçer - GEE kullanmıyorsan sorun olmaz.
+      - name: Check if GEE secret is set
+        id: gee_check
+        env:
+          GEE_JSON: ${{ secrets.GEE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GEE_JSON" ]; then
+            echo "has_gee=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_gee=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GEE service account file from secret
-        if: ${{ secrets.GEE_SERVICE_ACCOUNT_JSON != '' }}
+        if: steps.gee_check.outputs.has_gee == 'true'
         env:
           GEE_JSON: ${{ secrets.GEE_SERVICE_ACCOUNT_JSON }}
         run: |
