@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ArkeoSAR Sat</string>
+    <string name="result_activity_title">Analiz Sonucu</string>
+
+    <string name="instructions_draw_polygon">Taranacak alanı haritada dokunarak işaretleyin, ardından kapatmak için ilk noktaya dokunun.</string>
+    <string name="btn_clear_polygon">Temizle</string>
+    <string name="btn_run_analysis">Analizi Başlat</string>
+    <string name="btn_undo_point">Son Noktayı Geri Al</string>
+
+    <string name="status_fetching_satellite_data">Uydu verisi alınıyor…</string>
+    <string name="status_applying_filters">Yeraltı analiz filtreleri uygulanıyor…</string>
+    <string name="status_rendering_overlay">Harita üzerine ısı haritası çiziliyor…</string>
+    <string name="status_done">Analiz tamamlandı.</string>
+    <string name="status_error">Hata oluştu: %1$s</string>
+
+    <string name="error_polygon_too_small">Lütfen en az 3 noktalı bir alan çizin.</string>
+    <string name="error_polygon_too_large">Seçilen alan çok büyük. Lütfen daha küçük bir bölge seçin.</string>
+</resources>

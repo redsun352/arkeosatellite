@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ArkeoSARSat" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/arkeosar_primary</item>
+        <item name="colorPrimaryVariant">@color/arkeosar_primary_dark</item>
+        <item name="colorSecondary">@color/arkeosar_accent</item>
+        <item name="android:statusBarColor">@color/arkeosar_primary_dark</item>
+    </style>
+</resources>

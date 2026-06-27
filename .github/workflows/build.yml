@@ -1,0 +1,70 @@
+name: Build Debug APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      # local.properties Git'e gitmiyor (.gitignore) - secrets'tan build zamanında üretiyoruz.
+      # Her satır bir GitHub Secret'tan geliyor. Eksik bir secret varsa o satır boş kalır,
+      # build kırılmaz ama o kaynak/özellik çalışmaz (örn. MAPS_API_KEY boşsa harita boş gösterir).
+      - name: Create local.properties from secrets
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+          PLANET_API_KEY: ${{ secrets.PLANET_API_KEY }}
+          COPERNICUS_CLIENT_ID: ${{ secrets.COPERNICUS_CLIENT_ID }}
+          COPERNICUS_CLIENT_SECRET: ${{ secrets.COPERNICUS_CLIENT_SECRET }}
+          USGS_USER: ${{ secrets.USGS_USER }}
+          USGS_M2M_TOKEN: ${{ secrets.USGS_M2M_TOKEN }}
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          GEE_PROJECT_ID: ${{ secrets.GEE_PROJECT_ID }}
+        run: |
+          cat > local.properties << EOF
+          MAPS_API_KEY=$MAPS_API_KEY
+          PLANET_API_KEY=$PLANET_API_KEY
+          COPERNICUS_CLIENT_ID=$COPERNICUS_CLIENT_ID
+          COPERNICUS_CLIENT_SECRET=$COPERNICUS_CLIENT_SECRET
+          USGS_USER=$USGS_USER
+          USGS_M2M_TOKEN=$USGS_M2M_TOKEN
+          EARTHDATA_TOKEN=$EARTHDATA_TOKEN
+          GEE_PROJECT_ID=$GEE_PROJECT_ID
+          EOF
+
+      # GEE service account JSON'u da Git'e gitmiyor. Bunu tek bir secret olarak
+      # (dosyanın TÜM içeriği, base64 ENCODE EDİLMEDEN, ham JSON metni olarak) saklıyoruz
+      # ve build sırasında assets/ klasörüne yazıyoruz. Eğer secret tanımlı değilse
+      # bu adım dosyayı boş geçer - GEE kullanmıyorsan sorun olmaz.
+      - name: Create GEE service account file from secret
+        if: ${{ secrets.GEE_SERVICE_ACCOUNT_JSON != '' }}
+        env:
+          GEE_JSON: ${{ secrets.GEE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          mkdir -p app/src/main/assets
+          printf '%s' "$GEE_JSON" > app/src/main/assets/gee_service_account.json
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arkeosar-sat-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14

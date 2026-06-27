@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="arkeosar_primary">#1B5E20</color>
+    <color name="arkeosar_primary_dark">#0D3F11</color>
+    <color name="arkeosar_accent">#FF8F00</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+
+    <!-- Anomali ısı haritası renk skalası (düşük -> yüksek) -->
+    <color name="heatmap_low">#2166AC</color>
+    <color name="heatmap_mid_low">#67A9CF</color>
+    <color name="heatmap_mid">#FDDBC7</color>
+    <color name="heatmap_mid_high">#EF8A62</color>
+    <color name="heatmap_high">#B2182B</color>
+</resources>

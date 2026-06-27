@@ -1,0 +1,15 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Service account / hassas anahtarlar
+app/src/main/assets/gee_service_account.json
+*.env
+.env

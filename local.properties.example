@@ -1,0 +1,29 @@
+# local.properties.example
+# Bu dosyayı "local.properties" olarak kopyalayın (proje köküne) ve kendi
+# anahtarlarınızı doldurun. local.properties Git'e gönderilmez (.gitignore).
+#
+# ÖNEMLİ: Önceden paylaşılmış anahtarlarınızı (Planet, Copernicus, USGS,
+# Earthdata, Anthropic) buraya koymadan önce ilgili panellerden YENİDEN
+# OLUŞTURUN (rotate). Sohbet/ekran görüntüsü gibi yollarla paylaşılmış bir
+# anahtar artık güvenilir kabul edilmemelidir.
+
+# Google Maps SDK
+MAPS_API_KEY=
+
+# Planet Labs - https://www.planet.com/account/#/
+PLANET_API_KEY=
+
+# Copernicus Data Space / Sentinel Hub - https://dataspace.copernicus.eu/ (Dashboard > OAuth clients)
+COPERNICUS_CLIENT_ID=
+COPERNICUS_CLIENT_SECRET=
+
+# USGS M2M - https://ers.cr.usgs.gov (Profile > Access Request > M2M API Access)
+# Token: My Profile > User Preferences > Generate Token
+USGS_USER=
+USGS_M2M_TOKEN=
+
+# NASA Earthdata (ASTER TIR) - https://urs.earthdata.nasa.gov
+EARTHDATA_TOKEN=
+
+# Google Earth Engine
+GEE_PROJECT_ID=
