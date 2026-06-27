@@ -3,6 +3,9 @@ package com.arkeosar.satellite.ui
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.arkeosar.satellite.R
 import com.arkeosar.satellite.databinding.ActivityMainBinding
@@ -37,6 +40,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        applyWindowInsets()
+
         val mapFragment = supportFragmentManager.findFragmentById(R.id.mapFragment) as? SupportMapFragment
         mapFragment?.getMapAsync(this)
 
@@ -48,6 +53,26 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         binding.btnRunAnalysis.setOnClickListener {
             currentPolygon?.let { polygon -> runAnalysis(polygon) }
+        }
+    }
+
+    /**
+     * Üstteki talimat metni durum çubuğuyla (status bar), alttaki kontrol paneli
+     * de navigasyon çubuğuyla (navigation bar / gesture bar) çakışıyordu - çünkü
+     * layout tüm ekranı (edge-to-edge) kaplıyor ama sistem çubuklarının kapladığı
+     * alan için padding ayrılmamıştı. WindowInsets üzerinden bu alanları runtime'da
+     * öğrenip ilgili view'lara padding olarak ekliyoruz.
+     */
+    private fun applyWindowInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(binding.instructionText) { view, insets ->
+            val statusBarInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            view.updatePadding(top = statusBarInsets.top + view.paddingBottom)
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.controlPanel) { view, insets ->
+            val navBarInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            view.updatePadding(bottom = navBarInsets.bottom)
+            insets
         }
     }
 

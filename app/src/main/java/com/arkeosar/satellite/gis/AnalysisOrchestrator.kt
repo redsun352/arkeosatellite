@@ -27,19 +27,23 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         val bbox = polygon.boundingBox()
 
         // Her kaynaktan paralel olarak veri çek - biri başarısız olursa diğerleri etkilenmesin
-        // diye sonuçları Result<SourceScene> olarak topluyoruz.
-        val sceneResults = sources.map { source ->
+        // diye sonuçları Result<SourceScene> olarak topluyoruz. Hangi SatelliteSource'un
+        // hangi sonucu/hatayı ürettiğini eşleştirebilmek için (sourceType, result) çifti tutuyoruz.
+        val sceneResults = sources.map { dataSource ->
             async {
-                runCatching { source.fetchScene(bbox) }
+                dataSource.source to runCatching { dataSource.fetchScene(bbox) }
             }
         }.awaitAll()
 
-        val successfulScenes = sceneResults.mapNotNull { it.getOrNull() }
-        val failedCount = sceneResults.size - successfulScenes.size
+        val successfulScenes = sceneResults.mapNotNull { (_, result) -> result.getOrNull() }
+        val failures = sceneResults.mapNotNull { (sourceType, result) ->
+            result.exceptionOrNull()?.let { ex -> sourceType.displayName to (ex.message ?: ex.javaClass.simpleName) }
+        }
 
         if (successfulScenes.isEmpty()) {
+            val detail = failures.joinToString("; ") { (name, msg) -> "$name: $msg" }
             throw IllegalStateException(
-                "Hiçbir uydu kaynağından veri alınamadı (${sources.size} kaynak denendi, hepsi başarısız oldu)"
+                "Hiçbir uydu kaynağından veri alınamadı (${sources.size} kaynak denendi, hepsi başarısız oldu) -> $detail"
             )
         }
 
