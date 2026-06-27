@@ -4,20 +4,30 @@ import com.arkeosar.satellite.model.BoundingBox
 import com.arkeosar.satellite.network.BandRaster
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.zip.Inflater
 
 /**
  * Minimal TIFF/GeoTIFF okuyucu.
  *
- * Sentinel Hub Process API ve benzeri servisler, basit isteklerde genellikle
- * tek bant, sıkıştırılmamış (veya çok basit run-length tipte), "striped"
- * (tiled olmayan) TIFF dosyaları döndürür. Bu sınıf TAM bir GeoTIFF/TIFF
- * implementasyonu DEĞİLDİR - sadece bu projede ihtiyaç duyulan dar formatı
- * (tek bant, FLOAT32 veya UINT16, sıkıştırma yok) okur.
+ * Sentinel Hub Process API gibi servisler genellikle Deflate/ZLib sıkıştırmalı
+ * (TIFF Compression tag değeri 8 veya 32946) tek bant GeoTIFF döndürür. Bu sınıf
+ * TAM bir GeoTIFF/TIFF implementasyonu DEĞİLDİR - sadece bu projede ihtiyaç
+ * duyulan dar formatı (tek bant, FLOAT32/UINT16/UINT8, sıkıştırmasız VEYA
+ * Deflate/ZLib sıkıştırmalı, "striped" yani tiled olmayan) okur.
  *
- * Daha karmaşık TIFF'ler (tiled, LZW/Deflate sıkıştırmalı, çok bantlı) için
- * bu decoder İstisna fırlatır - böyle bir durumda Process API isteğinde
- * "compression: NONE" zorlanmalı veya gerçek bir TIFF kütüphanesi entegre
- * edilmeli (bkz. yorum: GeoTools/libtiff Android portları ağır bağımlılıklar
+ * Deflate/ZLib sıkıştırması, zlib'in (RFC1950) standart formatıdır - Java'nın
+ * yerleşik java.util.zip.Inflater sınıfı bunu native olarak açabilir, harici
+ * kütüphane gerekmez. ZLib (tag=8) ile Deflate (tag=32946) arasındaki tek fark
+ * TIFF Compression tag değeridir; sıkıştırılmış veri formatı özdeştir.
+ *
+ * Predictor (tag 317) değeri 2 ise, sıkıştırma öncesi her satıra "horizontal
+ * differencing" uygulanmıştır (her piksel, kendisinden önceki pikselle farkı
+ * olarak saklanır) - bu durumda inflate ettikten sonra kümülatif toplama ile
+ * geri alınması gerekir.
+ *
+ * Daha karmaşık TIFF'ler (tiled, LZW/JPEG sıkıştırmalı, çok bantlı) için
+ * bu decoder İstisna fırlatır - gerçek bir TIFF kütüphanesi gerekirdi
+ * (bkz. yorum: GeoTools/libtiff Android portları ağır bağımlılıklar
  * gerektirir, bu yüzden bilinçli olarak basitleştirilmiş bir yaklaşım seçildi -
  * tıpkı .v3d/.g3d format decode'unda yapıldığı gibi: sadece gerekli alt küme).
  *
@@ -32,11 +42,16 @@ object GeoTiffDecoder {
     private const val TAG_IMAGE_HEIGHT = 257
     private const val TAG_BITS_PER_SAMPLE = 258
     private const val TAG_COMPRESSION = 259
+    private const val TAG_PREDICTOR = 317
     private const val TAG_SAMPLE_FORMAT = 339
     private const val TAG_STRIP_OFFSETS = 273
     private const val TAG_STRIP_BYTE_COUNTS = 279
     private const val TAG_ROWS_PER_STRIP = 278
     private const val TAG_SAMPLES_PER_PIXEL = 277
+
+    private const val COMPRESSION_NONE = 1
+    private const val COMPRESSION_ZLIB = 8
+    private const val COMPRESSION_ADOBE_DEFLATE = 32946
 
     private data class IfdEntry(val tag: Int, val type: Int, val count: Int, val valueOrOffset: Int)
 
@@ -65,17 +80,22 @@ object GeoTiffDecoder {
         val height = entries.find(TAG_IMAGE_HEIGHT)?.valueOrOffset
             ?: throw IllegalStateException("TIFF'te ImageHeight tag'i yok")
         val bitsPerSample = entries.find(TAG_BITS_PER_SAMPLE)?.valueOrOffset ?: 32
-        val compression = entries.find(TAG_COMPRESSION)?.valueOrOffset ?: 1
+        val compression = entries.find(TAG_COMPRESSION)?.valueOrOffset ?: COMPRESSION_NONE
+        val predictor = entries.find(TAG_PREDICTOR)?.valueOrOffset ?: 1
         val sampleFormat = entries.find(TAG_SAMPLE_FORMAT)?.valueOrOffset ?: 3 // 3 = IEEE float varsayım
         val samplesPerPixel = entries.find(TAG_SAMPLES_PER_PIXEL)?.valueOrOffset ?: 1
         val rowsPerStrip = entries.find(TAG_ROWS_PER_STRIP)?.valueOrOffset ?: height
 
-        require(compression == 1) {
-            "Desteklenmeyen TIFF sıkıştırması: $compression. Bu decoder sadece sıkıştırılmamış " +
-                "(compression=1) TIFF okuyabilir. Process API isteğinde sıkıştırmasız format istenmeli."
+        require(compression == COMPRESSION_NONE || compression == COMPRESSION_ZLIB || compression == COMPRESSION_ADOBE_DEFLATE) {
+            "Desteklenmeyen TIFF sıkıştırması: $compression. Bu decoder sıkıştırmasız (1), " +
+                "ZLib (8) veya Adobe Deflate (32946) okuyabilir."
         }
         require(samplesPerPixel == 1) {
             "Desteklenmeyen bant sayısı: $samplesPerPixel. Bu decoder tek bant TIFF okur."
+        }
+        require(predictor == 1 || predictor == 2 || predictor == 3) {
+            "Desteklenmeyen predictor: $predictor. Bu decoder predictor 1 (yok), 2 (horizontal " +
+                "differencing) veya 3 (floating point predictor) destekler."
         }
 
         val stripOffsetsEntry = entries.find(TAG_STRIP_OFFSETS)
@@ -86,6 +106,7 @@ object GeoTiffDecoder {
         val stripOffsets = readValueArray(buffer, stripOffsetsEntry)
         val stripByteCounts = readValueArray(buffer, stripByteCountsEntry)
 
+        val bytesPerSample = bitsPerSample / 8
         val values = FloatArray(width * height)
         var rowCursor = 0
 
@@ -95,7 +116,25 @@ object GeoTiffDecoder {
             val rowsInThisStrip = minOf(rowsPerStrip, height - rowCursor)
             val samplesInStrip = rowsInThisStrip * width
 
-            val stripBuffer = ByteBuffer.wrap(tiffBytes, offset, byteCount).order(buffer.order())
+            // Strip'in ham (sıkıştırılmış olabilir) byte'larını al
+            val rawStripBytes = tiffBytes.copyOfRange(offset, offset + byteCount)
+
+            // Sıkıştırma varsa aç - ZLib/Deflate aynı formattır (RFC1950), tag değeri farklı.
+            val decompressedBytes = if (compression == COMPRESSION_NONE) {
+                rawStripBytes
+            } else {
+                inflateZlib(rawStripBytes, expectedSize = samplesInStrip * bytesPerSample)
+            }
+
+            // Predictor=2: integer horizontal differencing (sample seviyesinde kümülatif toplama).
+            // Predictor=3: floating point predictor (byte-plane reorder + byte seviyesinde fark) -
+            // bu ikisi FARKLI algoritmalardır, biri diğerinin integer/float versiyonu DEĞİLDİR.
+            when (predictor) {
+                2 -> applyHorizontalPredictorReversal(decompressedBytes, width, bytesPerSample, buffer.order())
+                3 -> applyFloatingPointPredictorReversal(decompressedBytes, width, bytesPerSample, rowsInThisStrip)
+            }
+
+            val stripBuffer = ByteBuffer.wrap(decompressedBytes).order(buffer.order())
             val stripStartIndex = rowCursor * width
 
             for (i in 0 until samplesInStrip) {
@@ -121,6 +160,123 @@ object GeoTiffDecoder {
             values = values,
             bandName = bandName
         )
+    }
+
+    /**
+     * zlib (RFC1950) formatındaki veriyi açar. java.util.zip.Inflater varsayılan
+     * olarak zlib header/trailer'ı bekler (nowrap=false), bu yüzden ekstra ayar gerekmez.
+     */
+    private fun inflateZlib(compressed: ByteArray, expectedSize: Int): ByteArray {
+        val inflater = Inflater()
+        inflater.setInput(compressed)
+        val output = ByteArray(expectedSize)
+        var totalRead = 0
+        try {
+            while (!inflater.finished() && totalRead < expectedSize) {
+                val read = inflater.inflate(output, totalRead, expectedSize - totalRead)
+                if (read == 0) {
+                    if (inflater.needsInput() || inflater.needsDictionary()) break
+                }
+                totalRead += read
+            }
+        } finally {
+            inflater.end()
+        }
+        require(totalRead == expectedSize) {
+            "Inflate sonrası beklenen boyuta ulaşılamadı: beklenen=$expectedSize, alınan=$totalRead"
+        }
+        return output
+    }
+
+    /**
+     * TIFF Predictor=3 (floating point predictor) geri alma işlemi.
+     *
+     * Kaynak: Adobe Photoshop TIFF Technical Note 3 (chriscox.org/TIFFTN3d1.pdf).
+     * Algoritma İKİ aşamalıdır ve Predictor=2'nin integer fark mantığından FARKLIDIR:
+     *
+     *  1) DecodeDeltaBytes: satırın TÜM byte'ları (width * bytesPerSample uzunluğunda,
+     *     channels=1 olduğumuz için) üzerinde, byte seviyesinde kümülatif toplama
+     *     (her byte, kendisinden önceki byte ile toplanır).
+     *  2) Byte reorder: yukarıdaki adımdan çıkan "semi-BigEndian" düzenden, her örneğin
+     *     gerçek (little-endian) byte sırasına geri dönülür. Encode sırasında byte'lar
+     *     "byte-plane" gruplarına ayrılmıştı (tüm piksellerin en yüksek byte'ı bir blok,
+     *     sonraki byte'lar başka blok...); burada bu gruplama geri açılır.
+     *
+     * Bu fonksiyon, strip içindeki HER SATIRI bağımsız olarak işler (TIFF spec: predictor
+     * satır sınırlarını aşmaz).
+     */
+    private fun applyFloatingPointPredictorReversal(data: ByteArray, width: Int, bytesPerSample: Int, rowCount: Int) {
+        val rowByteLen = width * bytesPerSample
+        val rowBuffer = ByteArray(rowByteLen)
+
+        for (row in 0 until rowCount) {
+            val rowStart = row * rowByteLen
+            System.arraycopy(data, rowStart, rowBuffer, 0, rowByteLen)
+
+            // 1) DecodeDeltaBytes - satırın tüm byte'ları üzerinde kümülatif toplama
+            for (col in 1 until rowByteLen) {
+                rowBuffer[col] = ((rowBuffer[col].toInt() and 0xFF) + (rowBuffer[col - 1].toInt() and 0xFF)).toByte()
+            }
+
+            // 2) Byte reorder - semi-BigEndian gruplamadan native little-endian sıraya dön.
+            // Referans (C, BigEndian=0 dalı): output[bytes*COL + BYTE] = input[(bytesPerSample-BYTE-1)*rowIncrement + COL]
+            // rowIncrement = width (channels=1 olduğu için cols*channels = width)
+            for (col in 0 until width) {
+                for (b in 0 until bytesPerSample) {
+                    val srcIndex = (bytesPerSample - b - 1) * width + col
+                    val dstIndex = bytesPerSample * col + b
+                    data[rowStart + dstIndex] = rowBuffer[srcIndex]
+                }
+            }
+        }
+    }
+
+    /**
+     * TIFF Predictor=2 (integer horizontal differencing) geri alma işlemi - sadece
+     * tam sayı örnek formatları (UINT8/UINT16) için. Floating point veri için
+     * Predictor=3 (applyFloatingPointPredictorReversal) kullanılır, BU FONKSİYON DEĞİL -
+     * ikisi farklı algoritmalardır.
+     */
+    private fun applyHorizontalPredictorReversal(data: ByteArray, width: Int, bytesPerSample: Int, order: ByteOrder) {
+        val buffer = ByteBuffer.wrap(data).order(order)
+        val rowBytes = width * bytesPerSample
+        val rowCount = data.size / rowBytes
+
+        for (row in 0 until rowCount) {
+            val rowStart = row * rowBytes
+            when (bytesPerSample) {
+                4 -> { // INT32/FLOAT32 - predictor floating point değil, integer fark mantığıyla çalışır (TIFF spec: tip 3 predictor floating point için ayrı, burada tip 2 integer fark)
+                    var previous = buffer.getInt(rowStart)
+                    for (col in 1 until width) {
+                        val pos = rowStart + col * 4
+                        val current = buffer.getInt(pos)
+                        val restored = current + previous
+                        buffer.putInt(pos, restored)
+                        previous = restored
+                    }
+                }
+                2 -> {
+                    var previous = buffer.getShort(rowStart).toInt() and 0xFFFF
+                    for (col in 1 until width) {
+                        val pos = rowStart + col * 2
+                        val current = buffer.getShort(pos).toInt() and 0xFFFF
+                        val restored = (current + previous) and 0xFFFF
+                        buffer.putShort(pos, restored.toShort())
+                        previous = restored
+                    }
+                }
+                1 -> {
+                    var previous = data[rowStart].toInt() and 0xFF
+                    for (col in 1 until width) {
+                        val pos = rowStart + col
+                        val current = data[pos].toInt() and 0xFF
+                        val restored = (current + previous) and 0xFF
+                        data[pos] = restored.toByte()
+                        previous = restored
+                    }
+                }
+            }
+        }
     }
 
     private fun readIfd(buffer: ByteBuffer, offset: Int): List<IfdEntry> {

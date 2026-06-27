@@ -6,13 +6,10 @@ import retrofit2.http.POST
 // --- Auth ---
 
 /**
- * NOT: "username" ve "token" alan adları, login-token endpoint'inin login endpoint'iyle
- * aynı şema mantığını izlediği varsayımına dayanıyor (login: username+password,
- * login-token: username+token). Bu, resmi USGS PDF dokümantasyonu (sadece tarayıcıdan
- * indirilebilir, bu ortamda metne çevrilemedi) yerine üçüncü parti kütüphane referanslarından
- * çıkarılmıştır. GERÇEK BİR İSTEKLE DOĞRULANMADAN production'a alınmamalı - ilk test
- * çağrısında errorCode="AUTH_INVALID" gibi bir hata dönerse, alan adı yanlış olabilir;
- * USGS M2M JSON API dokümantasyonunu (m2m.cr.usgs.gov/api/docs/json/) kontrol edin.
+ * DOĞRULANDI (28 Haziran 2026): "username" ve "token" alan adları gerçek bir
+ * login-token çağrısıyla test edildi ve doğru olduğu kanıtlandı. API, "password"
+ * alan adını tanımayıp "token" alanının eksik olduğunu bildirdi - bu da şemanın
+ * username+token olduğunu (password değil) kesin olarak doğruluyor.
  */
 data class LoginTokenRequest(val username: String, val token: String)
 
