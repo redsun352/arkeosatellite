@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Basit bir polygon/alan tarama simgesi: köşeli bir şekil + orta nokta -->
+    <path
+        android:fillColor="#FF8F00"
+        android:pathData="M30,30 L78,38 L70,78 L34,70 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,48 a6,6 0 1,0 0.1,0 Z" />
+</vector>
