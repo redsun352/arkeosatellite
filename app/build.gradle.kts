@@ -61,6 +61,25 @@ android {
         viewBinding = true
         buildConfig = true
     }
+
+    // google-auth-library gibi JVM-öncelikli kütüphaneler JAR'larının içine
+    // INDEX.LIST, DEPENDENCIES, LICENSE gibi meta dosyaları koyar. Android'in
+    // resource merge adımı, birden fazla bağımlılıkta aynı yol/isimde dosya
+    // bulunca çakışma hatası verir (DuplicateRelativeFileException). Bu meta
+    // dosyaları APK çalışma zamanında gerekli değildir, güvenle hariç tutulabilir.
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/*.kotlin_module"
+            )
+        }
+    }
 }
 
 dependencies {
