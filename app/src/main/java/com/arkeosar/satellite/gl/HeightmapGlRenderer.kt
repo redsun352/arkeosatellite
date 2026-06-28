@@ -134,7 +134,7 @@ class HeightmapGlRenderer(private val heightmap: HeightmapGrid) : GLSurfaceView.
         fun addVertex(row: Int, col: Int) {
             val score = heightmap.scores[row * w + col]
             positions.add(worldX(col)); positions.add(heightAt(row, col)); positions.add(worldZ(row))
-            val (r, g, b) = scoreToRgb(score)
+            val (r, g, b) = scoreToRgb(score.toDouble())
             colors.add(r); colors.add(g); colors.add(b); colors.add(1f)
         }
 
