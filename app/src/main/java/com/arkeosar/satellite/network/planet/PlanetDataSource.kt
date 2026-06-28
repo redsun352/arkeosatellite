@@ -99,14 +99,13 @@ class PlanetDataSource : SatelliteDataSource {
         val tiffBytes = response.body()?.bytes()
             ?: throw IllegalStateException("Planet: boş yanıt")
 
-        // NOT: ortho_analytic_4b_sr çok bantlıdır (B,G,R,NIR) - GeoTiffDecoder şu an
-        // tek bant okuyor. Burada yalnızca decode başarısı/başarısızlığı raporlanıyor;
-        // çok-bant desteği decoder'a eklenene kadar bu satır istisna fırlatabilir.
-        val raster = GeoTiffDecoder.decodeSingleBand(tiffBytes, bbox, "PLANET_RAW")
+        // ortho_analytic_4b_sr çok bantlıdır - PlanetScope Surface Reflectance ürünleri
+        // standart olarak BGRN (Blue, Green, Red, Near-Infrared) sırasındadır.
+        val bandRasters = GeoTiffDecoder.decodeMultiBand(tiffBytes, bbox, listOf("BLUE", "GREEN", "RED", "NIR"))
 
         SourceScene(
             source = source,
-            bands = mapOf("PLANET_RAW" to raster),
+            bands = bandRasters,
             acquiredEpochMs = System.currentTimeMillis()
         )
     }

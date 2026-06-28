@@ -134,7 +134,21 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
                     scores.add(score)
                     filters.add("Termal Anomali (Landsat TIRS)")
                 }
-                else -> { /* PLANET, ASTER_TIR: V1'de skor hesabına henüz dahil değil */ }
+                SatelliteSource.PLANET -> {
+                    // Planet ortho_analytic_4b_sr: ham DN (Digital Number) değerleri, kalibre
+                    // edilmiş reflectance değil. NDVI = (NIR-RED)/(NIR+RED) oransal bir formül
+                    // olduğu için DN ölçeğinde de matematiksel olarak doğru sonuç verir.
+                    val redRaster = scene.bands["RED"] ?: continue
+                    val nirRaster = scene.bands["NIR"] ?: continue
+                    val red = sampleNearest(redRaster, referenceRaster, row, col) ?: continue
+                    val nir = sampleNearest(nirRaster, referenceRaster, row, col) ?: continue
+                    if (nir + red < 1e-6) continue // sıfıra bölme koruması
+                    val ndvi = (nir - red) / (nir + red)
+                    val score = (1.0 - ((ndvi + 1.0) / 2.0)).coerceIn(0.0, 1.0)
+                    scores.add(score)
+                    filters.add("NDVI (Planet)")
+                }
+                else -> { /* ASTER_TIR: V1'de skor hesabına henüz dahil değil */ }
             }
         }
 

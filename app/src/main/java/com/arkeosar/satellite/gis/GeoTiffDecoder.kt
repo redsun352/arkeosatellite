@@ -53,12 +53,31 @@ object GeoTiffDecoder {
     private const val COMPRESSION_ZLIB = 8
     private const val COMPRESSION_ADOBE_DEFLATE = 32946
 
+    private const val TAG_PLANAR_CONFIG = 284
+    private const val PLANAR_CONFIG_CHUNKY = 1   // örnekler piksel başına interleaved (RGBRGBRGB...)
+    private const val PLANAR_CONFIG_SEPARATE = 2 // her bant ayrı bir düzlemde (RRR...GGG...BBB...)
+
     private data class IfdEntry(val tag: Int, val type: Int, val count: Int, val valueOrOffset: Int)
 
-    fun decodeSingleBand(tiffBytes: ByteArray, bbox: BoundingBox, bandName: String): BandRaster {
+    /** IFD'den çıkarılan, decode için gereken tüm temel bilgiler. */
+    private data class ImageInfo(
+        val buffer: ByteBuffer,
+        val width: Int,
+        val height: Int,
+        val bitsPerSample: Int,
+        val compression: Int,
+        val predictor: Int,
+        val sampleFormat: Int,
+        val samplesPerPixel: Int,
+        val rowsPerStrip: Int,
+        val planarConfig: Int,
+        val stripOffsets: IntArray,
+        val stripByteCounts: IntArray
+    )
+
+    private fun parseImageInfo(tiffBytes: ByteArray): ImageInfo {
         val buffer = ByteBuffer.wrap(tiffBytes)
 
-        // --- Header: byte order tespiti ---
         val b0 = tiffBytes[0].toInt() and 0xFF
         val b1 = tiffBytes[1].toInt() and 0xFF
         buffer.order(
@@ -79,19 +98,22 @@ object GeoTiffDecoder {
             ?: throw IllegalStateException("TIFF'te ImageWidth tag'i yok")
         val height = entries.find(TAG_IMAGE_HEIGHT)?.valueOrOffset
             ?: throw IllegalStateException("TIFF'te ImageHeight tag'i yok")
-        val bitsPerSample = entries.find(TAG_BITS_PER_SAMPLE)?.valueOrOffset ?: 32
+        // BitsPerSample count>1 olabilir (her bant için ayrı) - pratikte tüm bantlar aynı
+        // bit derinliğinde olur, bu yüzden ilk değeri kullanıyoruz.
+        val bitsPerSampleEntry = entries.find(TAG_BITS_PER_SAMPLE)
+        val bitsPerSample = if (bitsPerSampleEntry != null) {
+            readValueArray(buffer, bitsPerSampleEntry).first()
+        } else 32
         val compression = entries.find(TAG_COMPRESSION)?.valueOrOffset ?: COMPRESSION_NONE
         val predictor = entries.find(TAG_PREDICTOR)?.valueOrOffset ?: 1
-        val sampleFormat = entries.find(TAG_SAMPLE_FORMAT)?.valueOrOffset ?: 3 // 3 = IEEE float varsayım
+        val sampleFormat = entries.find(TAG_SAMPLE_FORMAT)?.valueOrOffset ?: 3
         val samplesPerPixel = entries.find(TAG_SAMPLES_PER_PIXEL)?.valueOrOffset ?: 1
         val rowsPerStrip = entries.find(TAG_ROWS_PER_STRIP)?.valueOrOffset ?: height
+        val planarConfig = entries.find(TAG_PLANAR_CONFIG)?.valueOrOffset ?: PLANAR_CONFIG_CHUNKY
 
         require(compression == COMPRESSION_NONE || compression == COMPRESSION_ZLIB || compression == COMPRESSION_ADOBE_DEFLATE) {
             "Desteklenmeyen TIFF sıkıştırması: $compression. Bu decoder sıkıştırmasız (1), " +
                 "ZLib (8) veya Adobe Deflate (32946) okuyabilir."
-        }
-        require(samplesPerPixel == 1) {
-            "Desteklenmeyen bant sayısı: $samplesPerPixel. Bu decoder tek bant TIFF okur."
         }
         require(predictor == 1 || predictor == 2 || predictor == 3) {
             "Desteklenmeyen predictor: $predictor. Bu decoder predictor 1 (yok), 2 (horizontal " +
@@ -103,63 +125,192 @@ object GeoTiffDecoder {
         val stripByteCountsEntry = entries.find(TAG_STRIP_BYTE_COUNTS)
             ?: throw IllegalStateException("TIFF'te StripByteCounts tag'i yok")
 
-        val stripOffsets = readValueArray(buffer, stripOffsetsEntry)
-        val stripByteCounts = readValueArray(buffer, stripByteCountsEntry)
+        return ImageInfo(
+            buffer = buffer,
+            width = width,
+            height = height,
+            bitsPerSample = bitsPerSample,
+            compression = compression,
+            predictor = predictor,
+            sampleFormat = sampleFormat,
+            samplesPerPixel = samplesPerPixel,
+            rowsPerStrip = rowsPerStrip,
+            planarConfig = planarConfig,
+            stripOffsets = readValueArray(buffer, stripOffsetsEntry),
+            stripByteCounts = readValueArray(buffer, stripByteCountsEntry)
+        )
+    }
 
-        val bytesPerSample = bitsPerSample / 8
-        val values = FloatArray(width * height)
+    /** Tek strip/tile'lık ham byte'ları decompress edip (gerekirse) predictor reversal uygular. */
+    private fun decompressAndUnpredict(
+        tiffBytes: ByteArray,
+        offset: Int,
+        byteCount: Int,
+        expectedSampleCount: Int,
+        bytesPerSample: Int,
+        pixelWidth: Int, // satırdaki piksel sayısı (bant sayısından BAĞIMSIZ - örn. chunky'de de görüntü genişliği)
+        bandCount: Int,  // piksel başına örnek (bant) sayısı - chunky'de >1 olabilir, separate'te her zaman 1
+        rowCount: Int,
+        compression: Int,
+        predictor: Int,
+        order: ByteOrder
+    ): ByteArray {
+        val rawBytes = tiffBytes.copyOfRange(offset, offset + byteCount)
+        val decompressed = if (compression == COMPRESSION_NONE) {
+            rawBytes
+        } else {
+            inflateZlib(rawBytes, expectedSize = expectedSampleCount * bytesPerSample)
+        }
+        when (predictor) {
+            // Predictor=2: TIFF spec'e göre differencing HER KOMPONENT (bant) için ayrı tutulur -
+            // yani chunky (interleaved) bir satırda B0,G0,R0,B1,G1,R1,... şeklinde dizilmiş veride,
+            // "önceki örnek" aynı bandın bir önceki PİKSELİ'dir, stream'deki hemen önceki byte değil.
+            // Bu, gerçek bir test TIFF'iyle doğrulanmış bir davranıştır (bkz. proje notları).
+            2 -> applyHorizontalPredictorReversal(decompressed, pixelWidth, bandCount, bytesPerSample, order)
+            3 -> applyFloatingPointPredictorReversal(decompressed, pixelWidth * bandCount, bytesPerSample, rowCount)
+        }
+        return decompressed
+    }
+
+    fun decodeSingleBand(tiffBytes: ByteArray, bbox: BoundingBox, bandName: String): BandRaster {
+        val info = parseImageInfo(tiffBytes)
+        require(info.samplesPerPixel == 1) {
+            "Desteklenmeyen bant sayısı: ${info.samplesPerPixel}. decodeSingleBand sadece tek bant TIFF okur - " +
+                "çok bantlı veri için decodeMultiBand kullanın."
+        }
+
+        val bytesPerSample = info.bitsPerSample / 8
+        val values = FloatArray(info.width * info.height)
         var rowCursor = 0
 
-        for (stripIndex in stripOffsets.indices) {
-            val offset = stripOffsets[stripIndex]
-            val byteCount = stripByteCounts[stripIndex]
-            val rowsInThisStrip = minOf(rowsPerStrip, height - rowCursor)
-            val samplesInStrip = rowsInThisStrip * width
+        for (stripIndex in info.stripOffsets.indices) {
+            val rowsInThisStrip = minOf(info.rowsPerStrip, info.height - rowCursor)
+            val samplesInStrip = rowsInThisStrip * info.width
 
-            // Strip'in ham (sıkıştırılmış olabilir) byte'larını al
-            val rawStripBytes = tiffBytes.copyOfRange(offset, offset + byteCount)
+            val decompressedBytes = decompressAndUnpredict(
+                tiffBytes = tiffBytes,
+                offset = info.stripOffsets[stripIndex],
+                byteCount = info.stripByteCounts[stripIndex],
+                expectedSampleCount = samplesInStrip,
+                bytesPerSample = bytesPerSample,
+                pixelWidth = info.width,
+                bandCount = 1,
+                rowCount = rowsInThisStrip,
+                compression = info.compression,
+                predictor = info.predictor,
+                order = info.buffer.order()
+            )
 
-            // Sıkıştırma varsa aç - ZLib/Deflate aynı formattır (RFC1950), tag değeri farklı.
-            val decompressedBytes = if (compression == COMPRESSION_NONE) {
-                rawStripBytes
-            } else {
-                inflateZlib(rawStripBytes, expectedSize = samplesInStrip * bytesPerSample)
-            }
-
-            // Predictor=2: integer horizontal differencing (sample seviyesinde kümülatif toplama).
-            // Predictor=3: floating point predictor (byte-plane reorder + byte seviyesinde fark) -
-            // bu ikisi FARKLI algoritmalardır, biri diğerinin integer/float versiyonu DEĞİLDİR.
-            when (predictor) {
-                2 -> applyHorizontalPredictorReversal(decompressedBytes, width, bytesPerSample, buffer.order())
-                3 -> applyFloatingPointPredictorReversal(decompressedBytes, width, bytesPerSample, rowsInThisStrip)
-            }
-
-            val stripBuffer = ByteBuffer.wrap(decompressedBytes).order(buffer.order())
-            val stripStartIndex = rowCursor * width
+            val stripBuffer = ByteBuffer.wrap(decompressedBytes).order(info.buffer.order())
+            val stripStartIndex = rowCursor * info.width
 
             for (i in 0 until samplesInStrip) {
-                val value = when {
-                    bitsPerSample == 32 && sampleFormat == 3 -> stripBuffer.float       // FLOAT32
-                    bitsPerSample == 16 && sampleFormat == 1 -> (stripBuffer.short.toInt() and 0xFFFF).toFloat() // UINT16
-                    bitsPerSample == 8 && sampleFormat == 1 -> (stripBuffer.get().toInt() and 0xFF).toFloat()    // UINT8
-                    else -> throw IllegalStateException(
-                        "Desteklenmeyen örnek formatı: bitsPerSample=$bitsPerSample sampleFormat=$sampleFormat"
-                    )
-                }
-                // stripBuffer sıralı (sequential) okunuyor; i, strip içindeki düz (flat) konum.
-                // Global pozisyon = stripStartIndex (önceki striplerden gelen satır offseti) + i.
-                values[stripStartIndex + i] = value
+                values[stripStartIndex + i] = readSample(stripBuffer, info.bitsPerSample, info.sampleFormat)
             }
             rowCursor += rowsInThisStrip
         }
 
-        return BandRaster(
-            bbox = bbox,
-            widthPx = width,
-            heightPx = height,
-            values = values,
-            bandName = bandName
-        )
+        return BandRaster(bbox = bbox, widthPx = info.width, heightPx = info.height, values = values, bandName = bandName)
+    }
+
+    /**
+     * Çok bantlı TIFF okur (örn. Planet'in ortho_analytic_4b_sr ürünü: B,G,R,NIR).
+     * Her iki PlanarConfiguration düzenini destekler:
+     *  - Chunky (1, varsayılan): piksel başına tüm bantlar art arda (B0G0R0N0, B1G1R1N1, ...)
+     *    -> her strip TÜM bantların verisini interleaved olarak içerir.
+     *  - Separate (2): her bant kendi ayrı strip'lerinde
+     *    -> stripOffsets/stripByteCounts dizisi, bant sayısı * (bant başına strip sayısı) uzunluğundadır,
+     *       sırayla [bant0_strip0, bant0_strip1, ..., bant1_strip0, ...] şeklinde gruplanmıştır.
+     *
+     * @param bandNames her bant indeksi için kullanılacak isim (örn. ["B","G","R","NIR"]).
+     *                  Boyutu samplesPerPixel ile eşleşmelidir.
+     * @return bant adı -> BandRaster eşlemesi.
+     */
+    fun decodeMultiBand(tiffBytes: ByteArray, bbox: BoundingBox, bandNames: List<String>): Map<String, BandRaster> {
+        val info = parseImageInfo(tiffBytes)
+        require(info.samplesPerPixel == bandNames.size) {
+            "TIFF'te ${info.samplesPerPixel} bant var ama ${bandNames.size} isim verildi (bandNames boyutu uyuşmuyor)"
+        }
+
+        val bytesPerSample = info.bitsPerSample / 8
+        val bandCount = info.samplesPerPixel
+        val bandValues = Array(bandCount) { FloatArray(info.width * info.height) }
+
+        if (info.planarConfig == PLANAR_CONFIG_SEPARATE) {
+            // Her bant kendi strip grubuna sahip - stripOffsets dizisi bant bazında bölünür.
+            // Separate düzende her strip TEK bir bandın verisini içerir, yani predictor reversal
+            // çağrısında bandCount=1 geçilir (decodeSingleBand ile aynı mantık).
+            val stripsPerBand = info.stripOffsets.size / bandCount
+            for (band in 0 until bandCount) {
+                var rowCursor = 0
+                for (localStripIndex in 0 until stripsPerBand) {
+                    val globalStripIndex = band * stripsPerBand + localStripIndex
+                    val rowsInThisStrip = minOf(info.rowsPerStrip, info.height - rowCursor)
+                    val samplesInStrip = rowsInThisStrip * info.width
+
+                    val decompressed = decompressAndUnpredict(
+                        tiffBytes = tiffBytes,
+                        offset = info.stripOffsets[globalStripIndex],
+                        byteCount = info.stripByteCounts[globalStripIndex],
+                        expectedSampleCount = samplesInStrip,
+                        bytesPerSample = bytesPerSample,
+                        pixelWidth = info.width,
+                        bandCount = 1,
+                        rowCount = rowsInThisStrip,
+                        compression = info.compression,
+                        predictor = info.predictor,
+                        order = info.buffer.order()
+                    )
+                    val stripBuffer = ByteBuffer.wrap(decompressed).order(info.buffer.order())
+                    val stripStartIndex = rowCursor * info.width
+                    for (i in 0 until samplesInStrip) {
+                        bandValues[band][stripStartIndex + i] = readSample(stripBuffer, info.bitsPerSample, info.sampleFormat)
+                    }
+                    rowCursor += rowsInThisStrip
+                }
+            }
+        } else {
+            // Chunky: her strip, piksel başına interleaved tüm bantları içerir.
+            var rowCursor = 0
+            for (stripIndex in info.stripOffsets.indices) {
+                val rowsInThisStrip = minOf(info.rowsPerStrip, info.height - rowCursor)
+                val samplesInStrip = rowsInThisStrip * info.width * bandCount
+
+                val decompressed = decompressAndUnpredict(
+                    tiffBytes = tiffBytes,
+                    offset = info.stripOffsets[stripIndex],
+                    byteCount = info.stripByteCounts[stripIndex],
+                    expectedSampleCount = samplesInStrip,
+                    bytesPerSample = bytesPerSample,
+                    pixelWidth = info.width,
+                    bandCount = bandCount,
+                    rowCount = rowsInThisStrip,
+                    compression = info.compression,
+                    predictor = info.predictor,
+                    order = info.buffer.order()
+                )
+                val stripBuffer = ByteBuffer.wrap(decompressed).order(info.buffer.order())
+                val stripStartIndex = rowCursor * info.width
+
+                for (i in 0 until rowsInThisStrip * info.width) {
+                    for (band in 0 until bandCount) {
+                        bandValues[band][stripStartIndex + i] = readSample(stripBuffer, info.bitsPerSample, info.sampleFormat)
+                    }
+                }
+                rowCursor += rowsInThisStrip
+            }
+        }
+
+        return bandNames.indices.associate { i ->
+            bandNames[i] to BandRaster(bbox = bbox, widthPx = info.width, heightPx = info.height, values = bandValues[i], bandName = bandNames[i])
+        }
+    }
+
+    private fun readSample(buffer: ByteBuffer, bitsPerSample: Int, sampleFormat: Int): Float = when {
+        bitsPerSample == 32 && sampleFormat == 3 -> buffer.float
+        bitsPerSample == 16 && sampleFormat == 1 -> (buffer.short.toInt() and 0xFFFF).toFloat()
+        bitsPerSample == 8 && sampleFormat == 1 -> (buffer.get().toInt() and 0xFF).toFloat()
+        else -> throw IllegalStateException("Desteklenmeyen örnek formatı: bitsPerSample=$bitsPerSample sampleFormat=$sampleFormat")
     }
 
     /**
@@ -236,43 +387,52 @@ object GeoTiffDecoder {
      * tam sayı örnek formatları (UINT8/UINT16) için. Floating point veri için
      * Predictor=3 (applyFloatingPointPredictorReversal) kullanılır, BU FONKSİYON DEĞİL -
      * ikisi farklı algoritmalardır.
+     *
+     * ÖNEMLİ (gerçek test verisiyle doğrulanmış davranış): differencing HER BANT/KOMPONENT
+     * için bağımsız olarak tutulur. Chunky (interleaved) çok bantlı bir satırda
+     * B0,G0,R0,N0,B1,G1,R1,N1,... şeklinde dizilmiş veride, B1'in "önceki örneği" B0'dır
+     * (G0 değil) - yani "önceki örnek", stream'de hemen önceki byte grubu değil, AYNI BANDIN
+     * bir önceki PİKSELİdir. bandCount=1 verilirse (tek bant veya separate-planar durumu)
+     * bu otomatik olarak klasik tek-bant differencing'e indirgenir.
      */
-    private fun applyHorizontalPredictorReversal(data: ByteArray, width: Int, bytesPerSample: Int, order: ByteOrder) {
+    private fun applyHorizontalPredictorReversal(data: ByteArray, pixelWidth: Int, bandCount: Int, bytesPerSample: Int, order: ByteOrder) {
         val buffer = ByteBuffer.wrap(data).order(order)
-        val rowBytes = width * bytesPerSample
+        val rowBytes = pixelWidth * bandCount * bytesPerSample
         val rowCount = data.size / rowBytes
 
         for (row in 0 until rowCount) {
             val rowStart = row * rowBytes
-            when (bytesPerSample) {
-                4 -> { // INT32/FLOAT32 - predictor floating point değil, integer fark mantığıyla çalışır (TIFF spec: tip 3 predictor floating point için ayrı, burada tip 2 integer fark)
-                    var previous = buffer.getInt(rowStart)
-                    for (col in 1 until width) {
-                        val pos = rowStart + col * 4
-                        val current = buffer.getInt(pos)
-                        val restored = current + previous
-                        buffer.putInt(pos, restored)
-                        previous = restored
+            // Her bant için ayrı bir "previous" değeri tutulur (ilk piksel için differencing yok,
+            // o bandın ilk ham değeri referans alınır).
+            val previous = IntArray(bandCount)
+
+            for (col in 0 until pixelWidth) {
+                for (band in 0 until bandCount) {
+                    val sampleIndex = col * bandCount + band
+                    val pos = rowStart + sampleIndex * bytesPerSample
+
+                    val current = when (bytesPerSample) {
+                        4 -> buffer.getInt(pos)
+                        2 -> buffer.getShort(pos).toInt() and 0xFFFF
+                        1 -> data[pos].toInt() and 0xFF
+                        else -> throw IllegalStateException("Desteklenmeyen bytesPerSample: $bytesPerSample")
                     }
-                }
-                2 -> {
-                    var previous = buffer.getShort(rowStart).toInt() and 0xFFFF
-                    for (col in 1 until width) {
-                        val pos = rowStart + col * 2
-                        val current = buffer.getShort(pos).toInt() and 0xFFFF
-                        val restored = (current + previous) and 0xFFFF
-                        buffer.putShort(pos, restored.toShort())
-                        previous = restored
-                    }
-                }
-                1 -> {
-                    var previous = data[rowStart].toInt() and 0xFF
-                    for (col in 1 until width) {
-                        val pos = rowStart + col
-                        val current = data[pos].toInt() and 0xFF
-                        val restored = (current + previous) and 0xFF
-                        data[pos] = restored.toByte()
-                        previous = restored
+
+                    if (col == 0) {
+                        previous[band] = current // ilk piksel: değer zaten ham, differencing uygulanmamış
+                    } else {
+                        val restored = when (bytesPerSample) {
+                            4 -> current + previous[band]
+                            2 -> (current + previous[band]) and 0xFFFF
+                            1 -> (current + previous[band]) and 0xFF
+                            else -> throw IllegalStateException("Desteklenmeyen bytesPerSample: $bytesPerSample")
+                        }
+                        when (bytesPerSample) {
+                            4 -> buffer.putInt(pos, restored)
+                            2 -> buffer.putShort(pos, restored.toShort())
+                            1 -> data[pos] = restored.toByte()
+                        }
+                        previous[band] = restored
                     }
                 }
             }
