@@ -266,6 +266,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                     putExtra(ResultActivity.EXTRA_CELL_LATS, topCells.map { it.lat }.toDoubleArray())
                     putExtra(ResultActivity.EXTRA_CELL_LNGS, topCells.map { it.lng }.toDoubleArray())
                     putExtra(ResultActivity.EXTRA_CELL_SCORES, topCells.map { it.score }.toDoubleArray())
+                    result.heightmap?.let { hm ->
+                        putExtra(ResultActivity.EXTRA_HEIGHTMAP_WIDTH, hm.width)
+                        putExtra(ResultActivity.EXTRA_HEIGHTMAP_HEIGHT, hm.height)
+                        putExtra(ResultActivity.EXTRA_HEIGHTMAP_SCORES, hm.scores)
+                    }
                 }
                 startActivity(intent)
             } catch (e: Exception) {

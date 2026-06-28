@@ -2,6 +2,7 @@ package com.arkeosar.satellite.gis
 
 import com.arkeosar.satellite.model.AnalysisResult
 import com.arkeosar.satellite.model.AnomalyCell
+import com.arkeosar.satellite.model.HeightmapGrid
 import com.arkeosar.satellite.model.ScanPolygon
 import com.arkeosar.satellite.model.SatelliteSource
 import com.arkeosar.satellite.network.BandRaster
@@ -23,6 +24,11 @@ import kotlinx.coroutines.coroutineScope
  * bu, kullanıcının "polygon içi taranır dışı taranmaz" isteğinin uygulanma noktasıdır.
  */
 class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
+
+    companion object {
+        /** 3D yüzey görselleştirmesi için downsample edilmiş grid boyutu (kare, NxN). */
+        private const val HEIGHTMAP_GRID_SIZE = 48
+    }
 
     suspend fun analyze(polygon: ScanPolygon, dateRange: DateRange): AnalysisResult = coroutineScope {
         val bbox = polygon.boundingBox()
@@ -48,13 +54,14 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
             )
         }
 
-        val cells = computeAnomalyCells(successfulScenes, polygon)
+        val (cells, heightmap) = computeAnomalyCells(successfulScenes, polygon)
 
         AnalysisResult(
             polygon = polygon,
             cells = cells,
             sourcesUsed = successfulScenes.map { it.source },
             failedSources = failures,
+            heightmap = heightmap,
             generatedAtEpochMs = System.currentTimeMillis()
         )
     }
@@ -71,7 +78,7 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
      *    sonuçlar üretir (bkz. zScoreToAnomalyScore dokümantasyonu).
      *  - Birden fazla kaynak varsa skorlar ortalanır (basit ensemble).
      */
-    private fun computeAnomalyCells(scenes: List<SourceScene>, polygon: ScanPolygon): List<AnomalyCell> {
+    private fun computeAnomalyCells(scenes: List<SourceScene>, polygon: ScanPolygon): Pair<List<AnomalyCell>, HeightmapGrid> {
         // Polygon'u GoogleMap LatLng listesine çevir (PolyUtil bunu bekliyor)
         val polygonLatLngs = polygon.points.map { LatLng(it.lat, it.lng) }
 
@@ -88,8 +95,8 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         // olarak geçilir.
         val statsCache = buildStatsCache(scenes)
 
+        // --- GEÇİŞ 1: Tam çözünürlükte AnomalyCell listesi (harita overlay'i için) ---
         val cells = mutableListOf<AnomalyCell>()
-
         for (row in 0 until referenceRaster.heightPx) {
             for (col in 0 until referenceRaster.widthPx) {
                 val lat = referenceRaster.bbox.maxLat -
@@ -109,7 +116,31 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
             }
         }
 
-        return cells
+        // --- GEÇİŞ 2: 3D yüzey görselleştirmesi için AYRI, downsample edilmiş düzenli grid ---
+        // Bu geçiş cells listesinden bağımsızdır - polygon dışı hücreler burada ATLANMAZ,
+        // 0f (düz/sıfır yükseklik) olarak işaretlenir, çünkü OpenGL'de tutarlı bir üçgen mesh
+        // inşa edebilmek için düzenli (her satır/sütun dolu) bir grid gerekir.
+        val heightmapScores = FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE)
+        for (gridRow in 0 until HEIGHTMAP_GRID_SIZE) {
+            for (gridCol in 0 until HEIGHTMAP_GRID_SIZE) {
+                val row = (gridRow.toDouble() / HEIGHTMAP_GRID_SIZE * referenceRaster.heightPx).toInt()
+                    .coerceIn(0, referenceRaster.heightPx - 1)
+                val col = (gridCol.toDouble() / HEIGHTMAP_GRID_SIZE * referenceRaster.widthPx).toInt()
+                    .coerceIn(0, referenceRaster.widthPx - 1)
+
+                val lat = referenceRaster.bbox.maxLat -
+                    (row.toDouble() / referenceRaster.heightPx) * (referenceRaster.bbox.maxLat - referenceRaster.bbox.minLat)
+                val lng = referenceRaster.bbox.minLng +
+                    (col.toDouble() / referenceRaster.widthPx) * (referenceRaster.bbox.maxLng - referenceRaster.bbox.minLng)
+
+                val insidePolygon = PolyUtil.containsLocation(LatLng(lat, lng), polygonLatLngs, true)
+                val (score, _) = computeScoreAt(scenes, referenceRaster, row, col, statsCache)
+                heightmapScores[gridRow * HEIGHTMAP_GRID_SIZE + gridCol] = if (insidePolygon) score.toFloat() else 0f
+            }
+        }
+        val heightmap = HeightmapGrid(width = HEIGHTMAP_GRID_SIZE, height = HEIGHTMAP_GRID_SIZE, scores = heightmapScores)
+
+        return cells to heightmap
     }
 
     private data class BandStats(val mean: Double, val std: Double)

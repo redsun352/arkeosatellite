@@ -1,8 +1,12 @@
 package com.arkeosar.satellite.ui
 
+import android.opengl.GLSurfaceView
 import android.os.Bundle
+import android.view.MotionEvent
 import androidx.appcompat.app.AppCompatActivity
 import com.arkeosar.satellite.databinding.ActivityResultBinding
+import com.arkeosar.satellite.gl.HeightmapGlRenderer
+import com.arkeosar.satellite.model.HeightmapGrid
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
@@ -13,13 +17,12 @@ import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.PolygonOptions
 
 /**
- * Analiz sonucunu harita üzerinde gösterir: taranan polygon sınırı + en yüksek
- * skorlu anomali hücrelerinin (en fazla 500 - bkz. MainActivity.runAnalysis)
- * basit renkli daireler olarak overlay'i.
- *
- * V1 sınırlaması: Gerçek piksel-bazlı ısı haritası (her hücre için ayrı renkli
- * kare/poligon) yerine, en yüksek skorlu hücrelerin nokta-bazlı gösterimi kullanılıyor -
- * tam çözünürlüklü heatmap (V2) ayrı bir iş olarak planlanıyor.
+ * Analiz sonucunu iki şekilde gösterir, kullanıcı bir toggle butonuyla geçiş yapar:
+ *  1) Harita görünümü: taranan polygon sınırı + en yüksek skorlu hücrelerin (en fazla 500)
+ *     renkli daireler olarak overlay'i (2D, coğrafi referanslı).
+ *  2) 3D yüzey görünümü: HeightmapGrid'den (48x48 downsample edilmiş düzenli grid)
+ *     OpenGL ile render edilen, skor=yükseklik mantığıyla çalışan bir yüzey -
+ *     kullanıcının istediği "Surfer tarzı" 3D anomali görselleştirmesi.
  */
 class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -32,9 +35,18 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         const val EXTRA_CELL_LATS = "extra_cell_lats"
         const val EXTRA_CELL_LNGS = "extra_cell_lngs"
         const val EXTRA_CELL_SCORES = "extra_cell_scores"
+        const val EXTRA_HEIGHTMAP_WIDTH = "extra_heightmap_width"
+        const val EXTRA_HEIGHTMAP_HEIGHT = "extra_heightmap_height"
+        const val EXTRA_HEIGHTMAP_SCORES = "extra_heightmap_scores"
     }
 
     private lateinit var binding: ActivityResultBinding
+    private var glSurfaceView: GLSurfaceView? = null
+    private var heightmapRenderer: HeightmapGlRenderer? = null
+    private var showing3d = false
+
+    // Dokunarak döndürme için son dokunuş pozisyonu
+    private var lastTouchX = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +67,68 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
 
         val mapFragment = supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment) as? SupportMapFragment
         mapFragment?.getMapAsync(this)
+
+        setupHeightmapView()
+
+        binding.btnToggleView.setOnClickListener { toggleView() }
+    }
+
+    private fun toggleView() {
+        showing3d = !showing3d
+        binding.heightmapContainer.visibility = if (showing3d) android.view.View.VISIBLE else android.view.View.GONE
+        // Harita Fragment'ı XML'de tanımlı olduğu için view'ını doğrudan gizliyoruz/gösteriyoruz.
+        mapFragmentView()?.visibility = if (showing3d) android.view.View.GONE else android.view.View.VISIBLE
+        binding.btnToggleView.setText(
+            if (showing3d) com.arkeosar.satellite.R.string.btn_view_map else com.arkeosar.satellite.R.string.btn_view_3d
+        )
+    }
+
+    private fun mapFragmentView(): android.view.View? =
+        supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment)?.view
+
+    /** HeightmapGrid verisini Intent'ten okuyup GLSurfaceView'i kurar (henüz görünür değil). */
+    private fun setupHeightmapView() {
+        val width = intent.getIntExtra(EXTRA_HEIGHTMAP_WIDTH, 0)
+        val height = intent.getIntExtra(EXTRA_HEIGHTMAP_HEIGHT, 0)
+        val scores = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_SCORES)
+
+        if (width <= 0 || height <= 0 || scores == null || scores.size != width * height) {
+            // Heightmap verisi yoksa (örn. eski bir Intent ya da hata durumu) 3D butonu devre dışı.
+            binding.btnToggleView.isEnabled = false
+            return
+        }
+
+        val grid = HeightmapGrid(width = width, height = height, scores = scores)
+        val renderer = HeightmapGlRenderer(grid)
+        heightmapRenderer = renderer
+
+        val surfaceView = object : GLSurfaceView(this) {
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> lastTouchX = event.x
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.x - lastTouchX
+                        renderer.rotationDegrees += dx * 0.5f
+                        lastTouchX = event.x
+                        requestRender()
+                    }
+                }
+                return true
+            }
+        }
+        surfaceView.setEGLContextClientVersion(2)
+        surfaceView.setRenderer(renderer)
+        surfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+
+        glSurfaceView = surfaceView
+        binding.heightmapContainer.addView(
+            surfaceView,
+            0, // hintText'in altında kalmasın diye index 0'a (en alta) ekleniyor
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
     }
 
     override fun onMapReady(map: GoogleMap) {
@@ -123,5 +197,15 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
                 (alpha shl 24) or (r shl 16) or (g shl 8) or b
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        glSurfaceView?.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        glSurfaceView?.onResume()
     }
 }

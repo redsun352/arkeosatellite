@@ -9,6 +9,9 @@
     <string name="btn_undo_point">Geri Al</string>
     <string name="btn_finish_polygon">Bitir</string>
     <string name="map_type_toggle_title">Harita Görünümü</string>
+    <string name="btn_view_3d">3D Görünüm</string>
+    <string name="btn_view_map">Harita</string>
+    <string name="heightmap_drag_hint">Döndürmek için sürükleyin</string>
 
     <string name="status_fetching_satellite_data">Uydu verisi alınıyor…</string>
     <string name="status_applying_filters">Yeraltı analiz filtreleri uygulanıyor…</string>

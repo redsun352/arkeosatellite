@@ -62,10 +62,23 @@ data class AnomalyCell(
     val contributingFilters: List<String>
 )
 
+/**
+ * 3D yüzey görselleştirmesi için düzenli (regular) bir grid - AnomalyCell listesinden
+ * farklı olarak burada her hücre sabit bir satır/sütun pozisyonuna sahiptir (polygon
+ * dışı hücreler de 0.0 skorla dahil edilir), bu sayede bir üçgen mesh inşa edilebilir.
+ * scores dizisi satır-major: scores[row * width + col].
+ */
+data class HeightmapGrid(
+    val width: Int,
+    val height: Int,
+    val scores: FloatArray // 0.0 - 1.0, boyut = width * height
+)
+
 data class AnalysisResult(
     val polygon: ScanPolygon,
     val cells: List<AnomalyCell>,
     val sourcesUsed: List<SatelliteSource>,
     val failedSources: List<Pair<String, String>> = emptyList(), // (kaynak adı, hata mesajı)
+    val heightmap: HeightmapGrid? = null,
     val generatedAtEpochMs: Long
 )
