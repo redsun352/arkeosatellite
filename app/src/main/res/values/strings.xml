@@ -6,7 +6,9 @@
     <string name="instructions_draw_polygon">Taranacak alanı haritada dokunarak işaretleyin, ardından kapatmak için ilk noktaya dokunun.</string>
     <string name="btn_clear_polygon">Temizle</string>
     <string name="btn_run_analysis">Analizi Başlat</string>
-    <string name="btn_undo_point">Son Noktayı Geri Al</string>
+    <string name="btn_undo_point">Geri Al</string>
+    <string name="btn_finish_polygon">Bitir</string>
+    <string name="map_type_toggle_title">Harita Görünümü</string>
 
     <string name="status_fetching_satellite_data">Uydu verisi alınıyor…</string>
     <string name="status_applying_filters">Yeraltı analiz filtreleri uygulanıyor…</string>

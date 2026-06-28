@@ -56,7 +56,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         mapFragment?.getMapAsync(this)
 
         binding.btnClear.setOnClickListener { shapeController.clear() }
-        binding.btnUndo.setOnClickListener { shapeController.undoLastPoint() }
+        binding.btnUndo.setOnClickListener {
+            shapeController.undoLastPoint()
+            updateFinishButtonState()
+        }
+        binding.btnFinishPolygon.setOnClickListener {
+            shapeController.finishPolygon()
+        }
         binding.btnRunAnalysis.setOnClickListener {
             currentPolygon?.let { polygon -> runAnalysis(polygon) }
         }
@@ -88,14 +94,33 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     override fun onMapReady(map: GoogleMap) {
+        // Arkeolojik tarama için uydu görüntüsü (etiketlerle birlikte) en kullanışlı
+        // varsayılan - kullanıcı toggle butonuyla normal harita görünümüne dönebilir.
+        map.mapType = GoogleMap.MAP_TYPE_HYBRID
+
         // Varsayılan kamera konumu: Kayseri civarı (Hasan'ın çalıştığı bölge)
         map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(38.514, 35.786), 14f))
 
         shapeController = ShapeDrawController(map) { polygon ->
             currentPolygon = polygon
             binding.btnRunAnalysis.isEnabled = polygon != null
+            updateFinishButtonState()
         }
         updateToolUi(DrawTool.POLYGON)
+
+        binding.toolMapType.setOnClickListener {
+            map.mapType = if (map.mapType == GoogleMap.MAP_TYPE_HYBRID) {
+                GoogleMap.MAP_TYPE_NORMAL
+            } else {
+                GoogleMap.MAP_TYPE_HYBRID
+            }
+        }
+    }
+
+    private fun updateFinishButtonState() {
+        if (::shapeController.isInitialized) {
+            binding.btnFinishPolygon.isEnabled = shapeController.canFinishPolygon()
+        }
     }
 
     private fun selectTool(tool: DrawTool) {
@@ -103,6 +128,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         shapeController.setTool(tool)
         currentPolygon = null
         binding.btnRunAnalysis.isEnabled = false
+        updateFinishButtonState()
         updateToolUi(tool)
     }
 
@@ -175,10 +201,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
                 showStatus(getString(R.string.status_done))
                 val failedSourcesText = result.failedSources.joinToString("\n") { (name, msg) -> "$name: $msg" }
+
+                // Intent boyutu sınırlı olduğu için TÜM hücreleri taşımak güvenli değil -
+                // sonuç ekranında görsel bir özet için en yüksek skorlu N hücreyi örnekliyoruz.
+                val topCells = result.cells.sortedByDescending { it.score }.take(500)
+
                 val intent = Intent(this@MainActivity, ResultActivity::class.java).apply {
                     putExtra(ResultActivity.EXTRA_CELL_COUNT, result.cells.size)
                     putExtra(ResultActivity.EXTRA_SOURCES, result.sourcesUsed.joinToString(", ") { it.displayName })
                     putExtra(ResultActivity.EXTRA_FAILED_SOURCES, failedSourcesText)
+                    putExtra(ResultActivity.EXTRA_POLYGON_LATS, polygon.points.map { it.lat }.toDoubleArray())
+                    putExtra(ResultActivity.EXTRA_POLYGON_LNGS, polygon.points.map { it.lng }.toDoubleArray())
+                    putExtra(ResultActivity.EXTRA_CELL_LATS, topCells.map { it.lat }.toDoubleArray())
+                    putExtra(ResultActivity.EXTRA_CELL_LNGS, topCells.map { it.lng }.toDoubleArray())
+                    putExtra(ResultActivity.EXTRA_CELL_SCORES, topCells.map { it.score }.toDoubleArray())
                 }
                 startActivity(intent)
             } catch (e: Exception) {

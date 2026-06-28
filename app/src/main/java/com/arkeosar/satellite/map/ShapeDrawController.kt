@@ -32,7 +32,7 @@ class ShapeDrawController(
     private val onPolygonChanged: (ScanPolygon?) -> Unit
 ) {
     companion object {
-        private const val CLOSE_THRESHOLD_METERS = 25.0
+        private const val CLOSE_THRESHOLD_METERS = 40.0 // yedek mekanizma; asıl kapama "Bitir" butonuyla yapılır
         private const val CIRCLE_POLYGON_SIDES = 32
     }
 
@@ -77,6 +77,8 @@ class ShapeDrawController(
     // ---------- POLYGON ----------
 
     private fun onPolygonTap(latLng: LatLng) {
+        // İlk noktaya yakın dokunuşla kapatma hâlâ desteklenir (alışkın kullanıcılar için),
+        // ama asıl güvenilir yol artık finishPolygon() - bir "Bitir" butonuna bağlanır.
         if (polygonPoints.size >= 3 && distanceMeters(polygonPoints.first(), latLng) <= CLOSE_THRESHOLD_METERS) {
             finalizePolygon(polygonPoints.toList())
             return
@@ -92,7 +94,25 @@ class ShapeDrawController(
         activePolyline = if (polygonPoints.size >= 2) {
             map.addPolyline(PolylineOptions().addAll(polygonPoints).color(0xFFFF8A3D.toInt()).width(4f))
         } else null
+
+        // Henüz kapanmadı (null) ama "Bitir" butonunun enabled durumu değişmiş olabilir -
+        // MainActivity bu callback'i her çağrıldığında canFinishPolygon()'u tekrar okur.
+        onPolygonChanged(null)
     }
+
+    /**
+     * Mevcut polygon noktalarını kapatır - ilk noktaya tekrar dokunmaya gerek kalmadan.
+     * Sadece POLYGON aracı aktifken ve en az 3 nokta varken bir şey yapar; aksi halde
+     * sessizce hiçbir şey yapmaz (UI tarafı, butonun enabled durumunu ayrıca kontrol eder).
+     */
+    fun finishPolygon() {
+        if (currentTool != DrawTool.POLYGON) return
+        if (polygonPoints.size < 3) return
+        finalizePolygon(polygonPoints.toList())
+    }
+
+    /** Polygon modunda, kapatma için "Bitir" butonunun aktif edilip edilemeyeceğini bildirir. */
+    fun canFinishPolygon(): Boolean = currentTool == DrawTool.POLYGON && polygonPoints.size >= 3 && !isClosed
 
     // ---------- RECTANGLE (iki dokunuşlu genel akış) ----------
 
@@ -200,6 +220,7 @@ class ShapeDrawController(
                 activePolyline = if (polygonPoints.size >= 2) {
                     map.addPolyline(PolylineOptions().addAll(polygonPoints).color(0xFFFF8A3D.toInt()).width(4f))
                 } else null
+                onPolygonChanged(null)
             }
             DrawTool.RECTANGLE, DrawTool.CIRCLE -> {
                 firstTapMarker?.remove()

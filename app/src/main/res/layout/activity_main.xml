@@ -53,7 +53,7 @@
             android:text="@string/instructions_draw_polygon" />
     </LinearLayout>
 
-    <!-- Sağda dikey araç sütunu: şekil araçları + katman seçici -->
+    <!-- Sağda dikey araç sütunu: şekil araçları + harita tipi + katman seçici -->
     <LinearLayout
         android:id="@+id/toolColumn"
         android:layout_width="wrap_content"
@@ -96,6 +96,17 @@
             app:tint="@color/text_primary"
             app:fabSize="mini"
             android:contentDescription="@string/tool_circle_title" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/toolMapType"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            app:srcCompat="@drawable/ic_satellite_view"
+            app:backgroundTint="@color/bg_surface_elevated"
+            app:tint="@color/text_primary"
+            app:fabSize="mini"
+            android:contentDescription="@string/map_type_toggle_title" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/toolLayers"
@@ -147,10 +158,12 @@
                 android:visibility="gone"
                 android:progressTint="@color/accent_scan" />
 
+            <!-- Birinci satır: Geri al / Temizle / Bitir -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:layout_marginBottom="8dp">
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnUndo"
@@ -160,6 +173,7 @@
                     android:layout_marginEnd="4dp"
                     android:text="@string/btn_undo_point"
                     android:textColor="@color/text_primary"
+                    android:textSize="12sp"
                     app:strokeColor="@color/border_subtle"
                     style="?attr/materialButtonOutlinedStyle" />
 
@@ -172,21 +186,33 @@
                     android:layout_marginEnd="4dp"
                     android:text="@string/btn_clear_polygon"
                     android:textColor="@color/text_primary"
+                    android:textSize="12sp"
                     app:strokeColor="@color/border_subtle"
                     style="?attr/materialButtonOutlinedStyle" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnRunAnalysis"
+                    android:id="@+id/btnFinishPolygon"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1.4"
+                    android:layout_weight="1"
                     android:layout_marginStart="4dp"
-                    android:text="@string/btn_run_analysis"
-                    app:backgroundTint="@color/accent_scan"
+                    android:text="@string/btn_finish_polygon"
                     android:textColor="@color/bg_base"
+                    android:textSize="12sp"
+                    app:backgroundTint="@color/accent_thermal"
                     android:enabled="false" />
-
             </LinearLayout>
+
+            <!-- İkinci satır: Analizi Başlat (tam genişlik, vurgulu) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRunAnalysis"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_run_analysis"
+                app:backgroundTint="@color/accent_scan"
+                android:textColor="@color/bg_base"
+                android:enabled="false" />
+
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
