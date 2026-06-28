@@ -45,15 +45,31 @@ class UsgsDataSource : SatelliteDataSource {
     private suspend fun getAuthToken(): String = withContext(Dispatchers.IO) {
         cachedAuthToken?.let { return@withContext it }
 
-        val response = api.loginToken(
-            LoginTokenRequest(username = SecureConfig.Usgs.user, token = SecureConfig.Usgs.m2mToken)
-        )
+        val response = callWithDetailedError("login-token") {
+            api.loginToken(LoginTokenRequest(username = SecureConfig.Usgs.user, token = SecureConfig.Usgs.m2mToken))
+        }
         if (response.errorCode != null) {
             throw IllegalStateException("USGS login-token hatası: ${response.errorCode} - ${response.errorMessage}")
         }
         val token = response.data ?: throw IllegalStateException("USGS login-token: boş token döndü")
         cachedAuthToken = token
         token
+    }
+
+    /**
+     * Retrofit'in suspend fonksiyonları, 2xx olmayan HTTP yanıtlarını otomatik olarak
+     * retrofit2.HttpException'a çevirir - bu exception'ın varsayılan mesajı sadece
+     * "HTTP 403 Forbidden" gibi kısa bir özet verir, sunucunun gerçek hata body'sini
+     * (genelde errorCode/errorMessage içeren JSON) GÖSTERMEZ. Bu sarmalayıcı, hangi
+     * adımda hata olduğunu ve sunucunun gerçek yanıt body'sini açıkça raporlar.
+     */
+    private suspend fun <T> callWithDetailedError(stepName: String, block: suspend () -> T): T {
+        return try {
+            block()
+        } catch (e: retrofit2.HttpException) {
+            val errorBody = e.response()?.errorBody()?.string()
+            throw IllegalStateException("USGS $stepName hatası: HTTP ${e.code()} - ${errorBody ?: e.message()}")
+        }
     }
 
     override suspend fun fetchScene(bbox: BoundingBox, maxAgeDays: Int): SourceScene = withContext(Dispatchers.IO) {
@@ -76,7 +92,7 @@ class UsgsDataSource : SatelliteDataSource {
             maxResults = 5
         )
 
-        val searchResponse = api.sceneSearch(authToken, searchRequest)
+        val searchResponse = callWithDetailedError("scene-search") { api.sceneSearch(authToken, searchRequest) }
         if (searchResponse.errorCode != null) {
             throw IllegalStateException("USGS scene-search hatası: ${searchResponse.errorCode} - ${searchResponse.errorMessage}")
         }
@@ -84,10 +100,9 @@ class UsgsDataSource : SatelliteDataSource {
         val bestScene = scenes.firstOrNull()
             ?: throw IllegalStateException("USGS: bölge/tarih için uygun Landsat sahnesi bulunamadı")
 
-        val optionsResponse = api.downloadOptions(
-            authToken,
-            DownloadOptionsRequest(datasetName = DATASET_NAME, entityIds = listOf(bestScene.entityId))
-        )
+        val optionsResponse = callWithDetailedError("download-options") {
+            api.downloadOptions(authToken, DownloadOptionsRequest(datasetName = DATASET_NAME, entityIds = listOf(bestScene.entityId)))
+        }
         if (optionsResponse.errorCode != null) {
             throw IllegalStateException("USGS download-options hatası: ${optionsResponse.errorCode}")
         }
@@ -95,10 +110,9 @@ class UsgsDataSource : SatelliteDataSource {
             it.available && it.productName.contains("Surface Temperature", ignoreCase = true)
         } ?: throw IllegalStateException("USGS: bu sahnede yüzey sıcaklığı ürünü bulunamadı/aktif değil")
 
-        val requestResponse = api.downloadRequest(
-            authToken,
-            DownloadRequestBody(downloads = listOf(DownloadEntry(entityId = bestScene.entityId, productId = thermalOption.id)))
-        )
+        val requestResponse = callWithDetailedError("download-request") {
+            api.downloadRequest(authToken, DownloadRequestBody(downloads = listOf(DownloadEntry(entityId = bestScene.entityId, productId = thermalOption.id))))
+        }
         if (requestResponse.errorCode != null) {
             throw IllegalStateException("USGS download-request hatası: ${requestResponse.errorCode}")
         }
