@@ -12,13 +12,16 @@ import com.arkeosar.satellite.filter.FilterType
 import com.arkeosar.satellite.filter.StructureProfile
 import com.arkeosar.satellite.filter.SurferFilters
 import com.arkeosar.satellite.gl.HeightmapGlRenderer
+import com.arkeosar.satellite.map.HeatmapBitmapRenderer
 import com.arkeosar.satellite.model.BoundingBox
 import com.arkeosar.satellite.model.HeightmapGrid
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
-import com.google.android.gms.maps.model.CircleOptions
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.GroundOverlay
+import com.google.android.gms.maps.model.GroundOverlayOptions
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.PolygonOptions
@@ -213,31 +216,34 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         return FloatArray(data.size) { i -> (data[i] - min) / range }
     }
 
+    private var currentGroundOverlay: GroundOverlay? = null
+
     private fun redrawMapOverlay(scores: FloatArray) {
         val map = googleMap ?: return
         val box = bbox ?: return
         val grid = originalGrid ?: return
 
         map.clear()
+        currentGroundOverlay = null
         drawPolygonOnMap(map)
 
-        // Grid hücrelerini coğrafi koordinata çevirip haritaya çiz (heightmap grid'i 48x48,
-        // bu boyutta nokta sayısı performans açısından sorunsuz).
-        for (row in 0 until grid.height) {
-            for (col in 0 until grid.width) {
-                val score = scores[row * grid.width + col]
-                if (score < 0.05f) continue // çok düşük skorları görsel gürültü olarak atla
-                val lat = box.maxLat - (row.toDouble() / grid.height) * (box.maxLat - box.minLat)
-                val lng = box.minLng + (col.toDouble() / grid.width) * (box.maxLng - box.minLng)
-                map.addCircle(
-                    CircleOptions()
-                        .center(LatLng(lat, lng))
-                        .radius(20.0)
-                        .fillColor(scoreToColor(score.toDouble()))
-                        .strokeWidth(0f)
-                )
-            }
-        }
+        // Kesintisiz, piksel-piksel boyalı bir ısı haritası: yüzlerce ayrı Circle nesnesi
+        // eklemek yerine (önceki yaklaşım - "yamalı" görünüme ve performans sorununa yol
+        // açıyordu), grid'i tek bir Bitmap'e render edip GroundOverlay olarak haritaya
+        // sabitliyoruz. Bu, kullanıcının referans aldığı "sürekli doku" görünümünü verir.
+        val scoredGrid = HeightmapGrid(width = grid.width, height = grid.height, scores = scores)
+        val bitmap = HeatmapBitmapRenderer.render(scoredGrid, HeatmapBitmapRenderer.Palette.SEPIA)
+
+        val bounds = LatLngBounds.Builder()
+            .include(LatLng(box.minLat, box.minLng))
+            .include(LatLng(box.maxLat, box.maxLng))
+            .build()
+        currentGroundOverlay = map.addGroundOverlay(
+            GroundOverlayOptions()
+                .image(BitmapDescriptorFactory.fromBitmap(bitmap))
+                .positionFromBounds(bounds)
+                .transparency(0.15f) // tamamen opak olmasın, altındaki uydu görüntüsü hafifçe görünsün
+        )
     }
 
     private fun drawPolygonOnMap(map: GoogleMap) {
@@ -310,9 +316,8 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         map.mapType = GoogleMap.MAP_TYPE_HYBRID
         googleMap = map
 
-        drawPolygonOnMap(map)
-
-        // Başlangıçta (filtre seçilmeden) orijinal grid'i normalize edip çiz.
+        // Başlangıçta (filtre seçilmeden) orijinal grid'i normalize edip çiz - redrawMapOverlay
+        // zaten kendi içinde polygon sınırını da çiziyor (map.clear() + drawPolygonOnMap).
         originalGrid?.let { grid ->
             redrawMapOverlay(normalizeToUnitRange(grid.scores))
         }
@@ -328,27 +333,6 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             map.moveCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 80))
         } catch (e: IllegalStateException) {
             // Harita henüz layout'u tamamlamamış olabilir (boyutu 0) - sessizce geç.
-        }
-    }
-
-    /** Skoru (0.0-1.0) düşükten yükseğe mavi -> sarı -> kırmızı geçişli bir ARGB renge çevirir. */
-    private fun scoreToColor(score: Double): Int {
-        val alpha = 160
-        return when {
-            score < 0.5 -> {
-                val t = (score / 0.5).coerceIn(0.0, 1.0)
-                val r = (33 + t * (255 - 33)).toInt()
-                val g = (102 + t * (220 - 102)).toInt()
-                val b = (172 + t * (60 - 172)).toInt()
-                (alpha shl 24) or (r shl 16) or (g shl 8) or b
-            }
-            else -> {
-                val t = ((score - 0.5) / 0.5).coerceIn(0.0, 1.0)
-                val r = (255).toInt()
-                val g = (220 - t * (220 - 30)).toInt()
-                val b = (60 - t * 60).toInt()
-                (alpha shl 24) or (r shl 16) or (g shl 8) or b
-            }
         }
     }
 
