@@ -53,6 +53,7 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
             polygon = polygon,
             cells = cells,
             sourcesUsed = successfulScenes.map { it.source },
+            failedSources = failures,
             generatedAtEpochMs = System.currentTimeMillis()
         )
     }

@@ -18,6 +18,7 @@ class ResultActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_CELL_COUNT = "extra_cell_count"
         const val EXTRA_SOURCES = "extra_sources"
+        const val EXTRA_FAILED_SOURCES = "extra_failed_sources"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,10 +28,14 @@ class ResultActivity : AppCompatActivity() {
 
         val cellCount = intent.getIntExtra(EXTRA_CELL_COUNT, 0)
         val sourcesText = intent.getStringExtra(EXTRA_SOURCES) ?: "-"
+        val failedSourcesText = intent.getStringExtra(EXTRA_FAILED_SOURCES) ?: ""
 
         binding.summaryText.text = buildString {
             append("Polygon içinde analiz edilen hücre sayısı: $cellCount\n\n")
             append("Kullanılan uydu kaynakları: $sourcesText")
+            if (failedSourcesText.isNotBlank()) {
+                append("\n\nBaşarısız olan kaynaklar:\n$failedSourcesText")
+            }
         }
     }
 }

@@ -66,5 +66,6 @@ data class AnalysisResult(
     val polygon: ScanPolygon,
     val cells: List<AnomalyCell>,
     val sourcesUsed: List<SatelliteSource>,
+    val failedSources: List<Pair<String, String>> = emptyList(), // (kaynak adı, hata mesajı)
     val generatedAtEpochMs: Long
 )

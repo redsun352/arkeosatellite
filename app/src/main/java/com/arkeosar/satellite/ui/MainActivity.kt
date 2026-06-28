@@ -102,9 +102,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 val result = orchestrator.analyze(polygon)
 
                 showStatus(getString(R.string.status_done))
+                val failedSourcesText = result.failedSources.joinToString("\n") { (name, msg) -> "$name: $msg" }
                 val intent = Intent(this@MainActivity, ResultActivity::class.java).apply {
                     putExtra(ResultActivity.EXTRA_CELL_COUNT, result.cells.size)
                     putExtra(ResultActivity.EXTRA_SOURCES, result.sourcesUsed.joinToString(", ") { it.displayName })
+                    putExtra(ResultActivity.EXTRA_FAILED_SOURCES, failedSourcesText)
                 }
                 startActivity(intent)
             } catch (e: Exception) {
