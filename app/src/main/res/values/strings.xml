@@ -13,6 +13,8 @@
     <string name="btn_view_map">Harita</string>
     <string name="heightmap_drag_hint">Döndürmek için sürükleyin</string>
     <string name="filter_label">Filtre:</string>
+    <string name="structure_label">Yapı:</string>
+    <string name="size_hint">m</string>
 
     <string name="status_fetching_satellite_data">Uydu verisi alınıyor…</string>
     <string name="status_applying_filters">Yeraltı analiz filtreleri uygulanıyor…</string>

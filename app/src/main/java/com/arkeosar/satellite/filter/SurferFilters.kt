@@ -23,15 +23,24 @@ import kotlin.math.sqrt
  */
 object SurferFilters {
 
-    fun apply(type: FilterType, data: FloatArray, width: Int, height: Int): FloatArray = when (type) {
+    /** Varsayılan (genel amaçlı) parametreler - bir StructureProfile seçilmediğinde kullanılır. */
+    private val DEFAULT_PARAMS = FilterParams(sigmaSmall = 0.8f, sigmaLarge = 3.0f, sigmaGaussian = 1.2f)
+
+    fun apply(
+        type: FilterType,
+        data: FloatArray,
+        width: Int,
+        height: Int,
+        params: FilterParams = DEFAULT_PARAMS
+    ): FloatArray = when (type) {
         FilterType.NONE -> data.copyOf()
-        FilterType.GAUSSIAN -> gaussianBlur(data, width, height, sigma = 1.2f)
+        FilterType.GAUSSIAN -> gaussianBlur(data, width, height, sigma = params.sigmaGaussian)
         FilterType.MEDIAN -> medianFilter(data, width, height, radius = 1)
         FilterType.ADAPTIVE -> adaptiveFilter(data, width, height, radius = 2)
-        FilterType.LOW_PASS -> gaussianBlur(data, width, height, sigma = 2.5f)
-        FilterType.HIGH_PASS -> highPass(data, width, height, sigma = 2.5f)
-        FilterType.BAND_PASS -> bandPass(data, width, height, sigmaSmall = 0.8f, sigmaLarge = 3.0f)
-        FilterType.BAND_STOP -> bandStop(data, width, height, sigmaSmall = 0.8f, sigmaLarge = 3.0f)
+        FilterType.LOW_PASS -> gaussianBlur(data, width, height, sigma = params.sigmaLarge)
+        FilterType.HIGH_PASS -> highPass(data, width, height, sigma = params.sigmaLarge)
+        FilterType.BAND_PASS -> bandPass(data, width, height, sigmaSmall = params.sigmaSmall, sigmaLarge = params.sigmaLarge)
+        FilterType.BAND_STOP -> bandStop(data, width, height, sigmaSmall = params.sigmaSmall, sigmaLarge = params.sigmaLarge)
         FilterType.GRADIENT -> gradientMagnitude(data, width, height)
         FilterType.LAPLACIAN -> laplacian(data, width, height)
         FilterType.EDGE_ENHANCEMENT -> edgeEnhancement(data, width, height)

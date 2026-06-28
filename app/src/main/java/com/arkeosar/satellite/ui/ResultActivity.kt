@@ -7,7 +7,9 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
 import com.arkeosar.satellite.databinding.ActivityResultBinding
+import com.arkeosar.satellite.filter.FilterParams
 import com.arkeosar.satellite.filter.FilterType
+import com.arkeosar.satellite.filter.StructureProfile
 import com.arkeosar.satellite.filter.SurferFilters
 import com.arkeosar.satellite.gl.HeightmapGlRenderer
 import com.arkeosar.satellite.model.BoundingBox
@@ -63,6 +65,8 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
     private var originalGrid: HeightmapGrid? = null
     private var bbox: BoundingBox? = null
     private var currentFilter: FilterType = FilterType.NONE
+    private var currentProfile: StructureProfile = StructureProfile.VOID
+    private var customSizeMeters: Double? = null // kullanıcı elle boyut girerse profilin varsayılanını ezer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +86,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         }
 
         loadHeightmapAndBounds()
+        setupStructureSpinner()
         setupFilterSpinner()
 
         val mapFragment = supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment) as? SupportMapFragment
@@ -111,6 +116,39 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    private fun setupStructureSpinner() {
+        val labels = StructureProfile.values().map { "${it.label} (~${it.typicalSizeMeters}m)" }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.structureSpinner.adapter = adapter
+
+        binding.structureSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                currentProfile = StructureProfile.values()[position]
+                binding.customSizeInput.setText(currentProfile.typicalSizeMeters.toString())
+                customSizeMeters = null // profil değişince elle girilen özel boyutu sıfırla
+                // Profil seçildiğinde, o profilin önerdiği İLK filtreyi otomatik seç -
+                // kullanıcı "Oda" seçtiğinde doğrudan Band Pass uygulanmış halini görsün.
+                val recommendedFilter = currentProfile.recommendedFilters.firstOrNull() ?: FilterType.NONE
+                val filterPosition = FilterType.values().indexOf(recommendedFilter)
+                if (filterPosition >= 0) binding.filterSpinner.setSelection(filterPosition)
+                applyFilterAndRefresh()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
+        binding.customSizeInput.setText(currentProfile.typicalSizeMeters.toString())
+        binding.customSizeInput.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                val entered = binding.customSizeInput.text.toString().toDoubleOrNull()
+                if (entered != null && entered > 0) {
+                    customSizeMeters = entered
+                    applyFilterAndRefresh()
+                }
+            }
+        }
+    }
+
     private fun setupFilterSpinner() {
         val labels = FilterType.values().map { it.label }
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels)
@@ -126,10 +164,29 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    /** Seçilen filtreyi orijinal grid'e uygular, 3D yüzeyi ve 2D harita overlay'ini günceller. */
+    /**
+     * Grid'in (48x48 downsample edilmiş) bir piksellik karesinin gerçek dünyadaki metre
+     * karşılığını hesaplar - polygon'un bbox'ı (gerçek coğrafi boyut) ile grid çözünürlüğünden
+     * (48) türetilir. Bu değer, StructureProfile'daki "tipik boyut (metre)"yi doğru bir
+     * piksel-cinsi sigma'ya çevirebilmek için gereklidir.
+     */
+    private fun computeMetersPerPixel(): Double {
+        val box = bbox ?: return 10.0 // bbox yoksa Sentinel-2'nin native çözünürlüğüne (10m) geri dön
+        val grid = originalGrid ?: return 10.0
+        val avgLat = (box.minLat + box.maxLat) / 2.0
+        val widthMeters = (box.maxLng - box.minLng) * 111_320.0 * Math.cos(Math.toRadians(avgLat))
+        val heightMeters = (box.maxLat - box.minLat) * 111_320.0
+        val metersPerPixelX = widthMeters / grid.width
+        val metersPerPixelY = heightMeters / grid.height
+        return (metersPerPixelX + metersPerPixelY) / 2.0
+    }
+
+    /** Seçilen filtreyi (yapı profiline göre kalibre edilmiş parametrelerle) orijinal grid'e uygular. */
     private fun applyFilterAndRefresh() {
         val grid = originalGrid ?: return
-        val filteredScores = SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height)
+        val metersPerPixel = computeMetersPerPixel()
+        val params: FilterParams = currentProfile.toFilterParams(metersPerPixel, customSizeMeters)
+        val filteredScores = SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height, params)
 
         // 3D yüzeyi güncelle - filtrelenmiş skorlar [0,1] aralığını aşabilir (örn. Laplacian,
         // High Pass negatif değerler üretebilir) - renderer'a vermeden önce normalize ediyoruz.
