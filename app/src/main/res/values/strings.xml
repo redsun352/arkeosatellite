@@ -16,4 +16,20 @@
 
     <string name="error_polygon_too_small">Lütfen en az 3 noktalı bir alan çizin.</string>
     <string name="error_polygon_too_large">Seçilen alan çok büyük. Lütfen daha küçük bir bölge seçin.</string>
+
+    <string name="tool_polygon_title">POLYGON</string>
+    <string name="tool_rectangle_title">DİKDÖRTGEN</string>
+    <string name="tool_circle_title">DAİRE</string>
+    <string name="layer_selector_title">Uydu Katmanları</string>
+
+    <string name="instructions_draw_rectangle">İlk köşeye dokunun, ardından karşı köşeye dokunarak dikdörtgeni tamamlayın.</string>
+    <string name="instructions_draw_circle">Merkeze dokunun, ardından yarıçapı belirlemek için kenara dokunun.</string>
+
+    <string name="layer_sheet_title">Uydu Kaynakları</string>
+    <string name="layer_sheet_subtitle">Analizde kullanılacak kaynakları seçin (en az bir kaynak gerekli)</string>
+    <string name="layer_sentinel2">Sentinel-2 (Multispektral · NDVI)</string>
+    <string name="layer_planet">Planet PSScene (NDVI)</string>
+    <string name="layer_usgs">Landsat TIRS (Termal)</string>
+    <string name="layer_apply">Uygula</string>
+    <string name="error_no_layer_selected">En az bir uydu kaynağı seçmelisiniz.</string>
 </resources>

@@ -9,31 +9,41 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.arkeosar.satellite.R
 import com.arkeosar.satellite.databinding.ActivityMainBinding
+import com.arkeosar.satellite.databinding.BottomsheetLayersBinding
 import com.arkeosar.satellite.gis.AnalysisOrchestrator
-import com.arkeosar.satellite.map.PolygonDrawController
+import com.arkeosar.satellite.map.DrawTool
+import com.arkeosar.satellite.map.ShapeDrawController
 import com.arkeosar.satellite.model.ScanPolygon
 import com.arkeosar.satellite.network.SatelliteDataSource
 import com.arkeosar.satellite.network.copernicus.CopernicusDataSource
+import com.arkeosar.satellite.network.planet.PlanetDataSource
 import com.arkeosar.satellite.network.usgs.UsgsDataSource
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var polygonController: PolygonDrawController
+    private lateinit var shapeController: ShapeDrawController
     private var currentPolygon: ScanPolygon? = null
 
-    // V1: PlanetDataSource activate/poll akışı asset bulunabilirliğine bağımlı olduğu için
-    // ve henüz gerçek bir hesapla test edilmediği için varsayılan kaynak listesine dahil
-    // edilmedi. Copernicus (NDVI) + USGS (termal) ile başlanıyor.
-    private val sources: List<SatelliteDataSource> by lazy {
-        listOf(CopernicusDataSource(), UsgsDataSource())
-    }
+    // Kullanıcının katman seçici bottom sheet'ten seçtiği kaynaklar - varsayılan
+    // olarak Sentinel-2 ve Planet açık, USGS kapalı (henüz "download" izni onay bekliyor).
+    private var sentinel2Enabled = true
+    private var planetEnabled = true
+    private var usgsEnabled = false
+
+    private val sources: List<SatelliteDataSource>
+        get() = buildList {
+            if (sentinel2Enabled) add(CopernicusDataSource())
+            if (planetEnabled) add(PlanetDataSource())
+            if (usgsEnabled) add(UsgsDataSource())
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,15 +55,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val mapFragment = supportFragmentManager.findFragmentById(R.id.mapFragment) as? SupportMapFragment
         mapFragment?.getMapAsync(this)
 
-        binding.btnClear.setOnClickListener {
-            polygonController.clear()
-        }
-        binding.btnUndo.setOnClickListener {
-            polygonController.undoLastPoint()
-        }
+        binding.btnClear.setOnClickListener { shapeController.clear() }
+        binding.btnUndo.setOnClickListener { shapeController.undoLastPoint() }
         binding.btnRunAnalysis.setOnClickListener {
             currentPolygon?.let { polygon -> runAnalysis(polygon) }
         }
+
+        binding.toolPolygon.setOnClickListener { selectTool(DrawTool.POLYGON) }
+        binding.toolRectangle.setOnClickListener { selectTool(DrawTool.RECTANGLE) }
+        binding.toolCircle.setOnClickListener { selectTool(DrawTool.CIRCLE) }
+        binding.toolLayers.setOnClickListener { showLayerSelector() }
     }
 
     /**
@@ -64,7 +75,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
      * öğrenip ilgili view'lara padding olarak ekliyoruz.
      */
     private fun applyWindowInsets() {
-        ViewCompat.setOnApplyWindowInsetsListener(binding.instructionText) { view, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.topBar) { view, insets ->
             val statusBarInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             view.updatePadding(top = statusBarInsets.top + view.paddingBottom)
             insets
@@ -80,10 +91,71 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         // Varsayılan kamera konumu: Kayseri civarı (Hasan'ın çalıştığı bölge)
         map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(38.514, 35.786), 14f))
 
-        polygonController = PolygonDrawController(map) { polygon ->
+        shapeController = ShapeDrawController(map) { polygon ->
             currentPolygon = polygon
             binding.btnRunAnalysis.isEnabled = polygon != null
         }
+        updateToolUi(DrawTool.POLYGON)
+    }
+
+    private fun selectTool(tool: DrawTool) {
+        if (!::shapeController.isInitialized) return
+        shapeController.setTool(tool)
+        currentPolygon = null
+        binding.btnRunAnalysis.isEnabled = false
+        updateToolUi(tool)
+    }
+
+    /** Aktif araca göre üst başlık metnini, talimat metnini ve FAB renklerini günceller. */
+    private fun updateToolUi(tool: DrawTool) {
+        val (titleRes, instructionRes) = when (tool) {
+            DrawTool.POLYGON -> R.string.tool_polygon_title to R.string.instructions_draw_polygon
+            DrawTool.RECTANGLE -> R.string.tool_rectangle_title to R.string.instructions_draw_rectangle
+            DrawTool.CIRCLE -> R.string.tool_circle_title to R.string.instructions_draw_circle
+        }
+        binding.toolNameText.setText(titleRes)
+        binding.instructionText.setText(instructionRes)
+
+        val activeColor = getColor(R.color.accent_scan)
+        val inactiveColor = getColor(R.color.bg_surface_elevated)
+        binding.toolPolygon.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (tool == DrawTool.POLYGON) activeColor else inactiveColor
+        )
+        binding.toolRectangle.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (tool == DrawTool.RECTANGLE) activeColor else inactiveColor
+        )
+        binding.toolCircle.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (tool == DrawTool.CIRCLE) activeColor else inactiveColor
+        )
+    }
+
+    /** Uydu kaynağı seçici bottom sheet'i gösterir. */
+    private fun showLayerSelector() {
+        val sheetBinding = BottomsheetLayersBinding.inflate(layoutInflater)
+        val dialog = BottomSheetDialog(this)
+        dialog.setContentView(sheetBinding.root)
+
+        sheetBinding.checkSentinel2.isChecked = sentinel2Enabled
+        sheetBinding.checkPlanet.isChecked = planetEnabled
+        sheetBinding.checkUsgs.isChecked = usgsEnabled
+
+        sheetBinding.btnApplyLayers.setOnClickListener {
+            val anySelected = sheetBinding.checkSentinel2.isChecked ||
+                sheetBinding.checkPlanet.isChecked ||
+                sheetBinding.checkUsgs.isChecked
+
+            if (!anySelected) {
+                showStatus(getString(R.string.error_no_layer_selected))
+                return@setOnClickListener
+            }
+
+            sentinel2Enabled = sheetBinding.checkSentinel2.isChecked
+            planetEnabled = sheetBinding.checkPlanet.isChecked
+            usgsEnabled = sheetBinding.checkUsgs.isChecked
+            dialog.dismiss()
+        }
+
+        dialog.show()
     }
 
     private fun runAnalysis(polygon: ScanPolygon) {

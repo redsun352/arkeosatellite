@@ -1,8 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="arkeosar_primary">#1B5E20</color>
-    <color name="arkeosar_primary_dark">#0D3F11</color>
-    <color name="arkeosar_accent">#FF8F00</color>
+    <!-- Koyu tema - "gece uydu taraması" paleti -->
+    <color name="bg_base">#0D1117</color>
+    <color name="bg_surface">#161B22</color>
+    <color name="bg_surface_elevated">#1F2530</color>
+    <color name="border_subtle">#30363D</color>
+
+    <color name="accent_scan">#39D98A</color>
+    <color name="accent_scan_dim">#1F7A4D</color>
+    <color name="accent_thermal">#FF8A3D</color>
+    <color name="accent_thermal_dim">#8A4A22</color>
+
+    <color name="text_primary">#E6EDF3</color>
+    <color name="text_secondary">#8B949E</color>
+
+    <color name="arkeosar_primary">#39D98A</color>
+    <color name="arkeosar_primary_dark">#1F7A4D</color>
+    <color name="arkeosar_accent">#FF8A3D</color>
     <color name="white">#FFFFFFFF</color>
     <color name="black">#FF000000</color>
 

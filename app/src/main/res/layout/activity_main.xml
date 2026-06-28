@@ -5,6 +5,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/bg_base"
     tools:context=".ui.MainActivity">
 
     <fragment
@@ -17,35 +18,114 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <TextView
-        android:id="@+id/instructionText"
+    <!-- Üst başlık: minimal, yarı saydam, marka + kısa talimat -->
+    <LinearLayout
+        android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#CC1B5E20"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
+        android:orientation="vertical"
+        android:background="#CC0D1117"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
         android:paddingTop="10dp"
         android:paddingBottom="10dp"
-        android:textColor="@color/white"
-        android:textSize="13sp"
-        android:text="@string/instructions_draw_polygon"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent">
 
+        <TextView
+            android:id="@+id/toolNameText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/tool_polygon_title"
+            android:textColor="@color/accent_scan"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.04" />
+
+        <TextView
+            android:id="@+id/instructionText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:text="@string/instructions_draw_polygon" />
+    </LinearLayout>
+
+    <!-- Sağda dikey araç sütunu: şekil araçları + katman seçici -->
+    <LinearLayout
+        android:id="@+id/toolColumn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginEnd="12dp"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="16dp">
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/toolPolygon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            app:srcCompat="@drawable/ic_tool_polygon"
+            app:backgroundTint="@color/accent_scan"
+            app:tint="@color/bg_base"
+            app:fabSize="mini"
+            android:contentDescription="@string/tool_polygon_title" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/toolRectangle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            app:srcCompat="@drawable/ic_tool_rectangle"
+            app:backgroundTint="@color/bg_surface_elevated"
+            app:tint="@color/text_primary"
+            app:fabSize="mini"
+            android:contentDescription="@string/tool_rectangle_title" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/toolCircle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp"
+            app:srcCompat="@drawable/ic_tool_circle"
+            app:backgroundTint="@color/bg_surface_elevated"
+            app:tint="@color/text_primary"
+            app:fabSize="mini"
+            android:contentDescription="@string/tool_circle_title" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/toolLayers"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:srcCompat="@drawable/ic_layers"
+            app:backgroundTint="@color/accent_thermal"
+            app:tint="@color/bg_base"
+            app:fabSize="mini"
+            android:contentDescription="@string/layer_selector_title" />
+
+    </LinearLayout>
+
+    <!-- Alt kontrol paneli: durum + ilerleme + aksiyon butonları -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/controlPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:cardElevation="8dp"
+        app:cardBackgroundColor="@color/bg_surface"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/border_subtle"
+        app:strokeWidth="1dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
             android:paddingTop="12dp"
             android:paddingBottom="12dp">
 
@@ -54,6 +134,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textSize="13sp"
+                android:textColor="@color/text_secondary"
                 android:layout_marginBottom="8dp"
                 android:visibility="gone" />
 
@@ -63,7 +144,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="8dp"
-                android:visibility="gone" />
+                android:visibility="gone"
+                android:progressTint="@color/accent_scan" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -77,6 +159,8 @@
                     android:layout_weight="1"
                     android:layout_marginEnd="4dp"
                     android:text="@string/btn_undo_point"
+                    android:textColor="@color/text_primary"
+                    app:strokeColor="@color/border_subtle"
                     style="?attr/materialButtonOutlinedStyle" />
 
                 <com.google.android.material.button.MaterialButton
@@ -87,6 +171,8 @@
                     android:layout_marginStart="4dp"
                     android:layout_marginEnd="4dp"
                     android:text="@string/btn_clear_polygon"
+                    android:textColor="@color/text_primary"
+                    app:strokeColor="@color/border_subtle"
                     style="?attr/materialButtonOutlinedStyle" />
 
                 <com.google.android.material.button.MaterialButton
@@ -96,6 +182,8 @@
                     android:layout_weight="1.4"
                     android:layout_marginStart="4dp"
                     android:text="@string/btn_run_analysis"
+                    app:backgroundTint="@color/accent_scan"
+                    android:textColor="@color/bg_base"
                     android:enabled="false" />
 
             </LinearLayout>
