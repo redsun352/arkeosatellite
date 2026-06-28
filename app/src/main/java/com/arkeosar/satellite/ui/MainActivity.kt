@@ -266,6 +266,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                     putExtra(ResultActivity.EXTRA_CELL_LATS, topCells.map { it.lat }.toDoubleArray())
                     putExtra(ResultActivity.EXTRA_CELL_LNGS, topCells.map { it.lng }.toDoubleArray())
                     putExtra(ResultActivity.EXTRA_CELL_SCORES, topCells.map { it.score }.toDoubleArray())
+                    val polygonBbox = polygon.boundingBox()
+                    putExtra(ResultActivity.EXTRA_BBOX_MIN_LAT, polygonBbox.minLat)
+                    putExtra(ResultActivity.EXTRA_BBOX_MAX_LAT, polygonBbox.maxLat)
+                    putExtra(ResultActivity.EXTRA_BBOX_MIN_LNG, polygonBbox.minLng)
+                    putExtra(ResultActivity.EXTRA_BBOX_MAX_LNG, polygonBbox.maxLng)
                     result.heightmap?.let { hm ->
                         putExtra(ResultActivity.EXTRA_HEIGHTMAP_WIDTH, hm.width)
                         putExtra(ResultActivity.EXTRA_HEIGHTMAP_HEIGHT, hm.height)

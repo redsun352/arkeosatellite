@@ -25,7 +25,7 @@ import javax.microedition.khronos.opengles.GL10
  *    tutarlı bir skala kullanılarak - kullanıcı iki görünüm arasında geçiş yaptığında aynı
  *    renk dilini görsün diye.
  */
-class HeightmapGlRenderer(private val heightmap: HeightmapGrid) : GLSurfaceView.Renderer {
+class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Renderer {
 
     companion object {
         private const val HEIGHT_SCALE = 1.4f // skor[0,1] -> dünya birimi yükseklik çarpanı
@@ -48,6 +48,18 @@ class HeightmapGlRenderer(private val heightmap: HeightmapGrid) : GLSurfaceView.
                 gl_FragColor = vColor;
             }
         """
+    }
+
+    // @Volatile: ResultActivity (UI thread) bu referansı değiştirir, GL render thread'i okur.
+    // Gerçek mesh yeniden inşası (buildMesh) GL thread'inde onDrawFrame'de yapılır - vertex/color
+    // buffer'lar GL context'ine bağlı olduğu için doğrudan UI thread'inden oluşturulmamalıdır.
+    @Volatile private var heightmap = initialHeightmap
+    @Volatile private var meshDirty = true
+
+    /** Grid'i değiştirir (örn. filtre uygulandığında) - asıl mesh yeniden inşası GL thread'inde olur. */
+    fun updateGrid(newHeightmap: HeightmapGrid) {
+        heightmap = newHeightmap
+        meshDirty = true
     }
 
     private var program = 0
@@ -79,6 +91,7 @@ class HeightmapGlRenderer(private val heightmap: HeightmapGrid) : GLSurfaceView.
         }
 
         buildMesh()
+        meshDirty = false
     }
 
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
@@ -88,6 +101,11 @@ class HeightmapGlRenderer(private val heightmap: HeightmapGrid) : GLSurfaceView.
     }
 
     override fun onDrawFrame(unused: GL10?) {
+        if (meshDirty) {
+            buildMesh()
+            meshDirty = false
+        }
+
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glUseProgram(program)
 

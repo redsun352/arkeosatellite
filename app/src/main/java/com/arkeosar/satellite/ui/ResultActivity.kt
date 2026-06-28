@@ -3,9 +3,14 @@ package com.arkeosar.satellite.ui
 import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.view.MotionEvent
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
 import com.arkeosar.satellite.databinding.ActivityResultBinding
+import com.arkeosar.satellite.filter.FilterType
+import com.arkeosar.satellite.filter.SurferFilters
 import com.arkeosar.satellite.gl.HeightmapGlRenderer
+import com.arkeosar.satellite.model.BoundingBox
 import com.arkeosar.satellite.model.HeightmapGrid
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
@@ -18,11 +23,14 @@ import com.google.android.gms.maps.model.PolygonOptions
 
 /**
  * Analiz sonucunu iki şekilde gösterir, kullanıcı bir toggle butonuyla geçiş yapar:
- *  1) Harita görünümü: taranan polygon sınırı + en yüksek skorlu hücrelerin (en fazla 500)
- *     renkli daireler olarak overlay'i (2D, coğrafi referanslı).
- *  2) 3D yüzey görünümü: HeightmapGrid'den (48x48 downsample edilmiş düzenli grid)
- *     OpenGL ile render edilen, skor=yükseklik mantığıyla çalışan bir yüzey -
- *     kullanıcının istediği "Surfer tarzı" 3D anomali görselleştirmesi.
+ *  1) Harita görünümü: taranan polygon sınırı + HeightmapGrid'den türetilmiş, skor
+ *     bazlı renklendirilmiş daireler (2D, coğrafi referanslı).
+ *  2) 3D yüzey görünümü: HeightmapGrid'den OpenGL ile render edilen, skor=yükseklik
+ *     mantığıyla çalışan bir yüzey ("Surfer tarzı" 3D anomali görselleştirmesi).
+ *
+ * Kullanıcı bir FİLTRE (Gaussian, Median, High Pass, Laplacian, vb. - bkz. SurferFilters)
+ * seçtiğinde, bu filtre HeightmapGrid'in skor matrisine uygulanır ve HEM 3D yüzey HEM
+ * 2D harita overlay'i güncellenir - ikisi de aynı (filtrelenmiş) veriden besleniyor.
  */
 class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -38,15 +46,23 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         const val EXTRA_HEIGHTMAP_WIDTH = "extra_heightmap_width"
         const val EXTRA_HEIGHTMAP_HEIGHT = "extra_heightmap_height"
         const val EXTRA_HEIGHTMAP_SCORES = "extra_heightmap_scores"
+        const val EXTRA_BBOX_MIN_LAT = "extra_bbox_min_lat"
+        const val EXTRA_BBOX_MAX_LAT = "extra_bbox_max_lat"
+        const val EXTRA_BBOX_MIN_LNG = "extra_bbox_min_lng"
+        const val EXTRA_BBOX_MAX_LNG = "extra_bbox_max_lng"
     }
 
     private lateinit var binding: ActivityResultBinding
     private var glSurfaceView: GLSurfaceView? = null
     private var heightmapRenderer: HeightmapGlRenderer? = null
+    private var googleMap: GoogleMap? = null
     private var showing3d = false
 
-    // Dokunarak döndürme için son dokunuş pozisyonu
     private var lastTouchX = 0f
+
+    private var originalGrid: HeightmapGrid? = null
+    private var bbox: BoundingBox? = null
+    private var currentFilter: FilterType = FilterType.NONE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +81,9 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             }
         }
 
+        loadHeightmapAndBounds()
+        setupFilterSpinner()
+
         val mapFragment = supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment) as? SupportMapFragment
         mapFragment?.getMapAsync(this)
 
@@ -73,10 +92,114 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         binding.btnToggleView.setOnClickListener { toggleView() }
     }
 
+    /** Intent'ten HeightmapGrid ve bbox verisini okur (filtre yeniden hesaplamaları için saklanır). */
+    private fun loadHeightmapAndBounds() {
+        val width = intent.getIntExtra(EXTRA_HEIGHTMAP_WIDTH, 0)
+        val height = intent.getIntExtra(EXTRA_HEIGHTMAP_HEIGHT, 0)
+        val scores = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_SCORES)
+
+        if (width > 0 && height > 0 && scores != null && scores.size == width * height) {
+            originalGrid = HeightmapGrid(width = width, height = height, scores = scores)
+        }
+
+        val minLat = intent.getDoubleExtra(EXTRA_BBOX_MIN_LAT, Double.NaN)
+        val maxLat = intent.getDoubleExtra(EXTRA_BBOX_MAX_LAT, Double.NaN)
+        val minLng = intent.getDoubleExtra(EXTRA_BBOX_MIN_LNG, Double.NaN)
+        val maxLng = intent.getDoubleExtra(EXTRA_BBOX_MAX_LNG, Double.NaN)
+        if (!minLat.isNaN() && !maxLat.isNaN() && !minLng.isNaN() && !maxLng.isNaN()) {
+            bbox = BoundingBox(minLat = minLat, maxLat = maxLat, minLng = minLng, maxLng = maxLng)
+        }
+    }
+
+    private fun setupFilterSpinner() {
+        val labels = FilterType.values().map { it.label }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.filterSpinner.adapter = adapter
+
+        binding.filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                currentFilter = FilterType.values()[position]
+                applyFilterAndRefresh()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    /** Seçilen filtreyi orijinal grid'e uygular, 3D yüzeyi ve 2D harita overlay'ini günceller. */
+    private fun applyFilterAndRefresh() {
+        val grid = originalGrid ?: return
+        val filteredScores = SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height)
+
+        // 3D yüzeyi güncelle - filtrelenmiş skorlar [0,1] aralığını aşabilir (örn. Laplacian,
+        // High Pass negatif değerler üretebilir) - renderer'a vermeden önce normalize ediyoruz.
+        val normalized = normalizeToUnitRange(filteredScores)
+        val filteredGrid = HeightmapGrid(width = grid.width, height = grid.height, scores = normalized)
+        heightmapRenderer?.updateGrid(filteredGrid)
+        glSurfaceView?.requestRender()
+
+        // 2D haritayı güncelle - mevcut overlay'leri temizleyip filtrelenmiş grid'den yeniden çiz.
+        redrawMapOverlay(normalized)
+    }
+
+    /**
+     * Filtre çıktısı (özellikle High Pass, Laplacian, Gradient gibi türev-bazlı filtreler)
+     * [0,1] dışına çıkabilir ya da negatif olabilir - görselleştirme için [0,1]'e normalize edilir.
+     * Bu, filtrenin GÖRELİ etkisini (en düşük->en yüksek) korur, mutlak skor anlamını değiştirir.
+     */
+    private fun normalizeToUnitRange(data: FloatArray): FloatArray {
+        if (data.isEmpty()) return data
+        val min = data.min()
+        val max = data.max()
+        val range = max - min
+        if (range < 1e-6f) return FloatArray(data.size) { 0.5f }
+        return FloatArray(data.size) { i -> (data[i] - min) / range }
+    }
+
+    private fun redrawMapOverlay(scores: FloatArray) {
+        val map = googleMap ?: return
+        val box = bbox ?: return
+        val grid = originalGrid ?: return
+
+        map.clear()
+        drawPolygonOnMap(map)
+
+        // Grid hücrelerini coğrafi koordinata çevirip haritaya çiz (heightmap grid'i 48x48,
+        // bu boyutta nokta sayısı performans açısından sorunsuz).
+        for (row in 0 until grid.height) {
+            for (col in 0 until grid.width) {
+                val score = scores[row * grid.width + col]
+                if (score < 0.05f) continue // çok düşük skorları görsel gürültü olarak atla
+                val lat = box.maxLat - (row.toDouble() / grid.height) * (box.maxLat - box.minLat)
+                val lng = box.minLng + (col.toDouble() / grid.width) * (box.maxLng - box.minLng)
+                map.addCircle(
+                    CircleOptions()
+                        .center(LatLng(lat, lng))
+                        .radius(20.0)
+                        .fillColor(scoreToColor(score.toDouble()))
+                        .strokeWidth(0f)
+                )
+            }
+        }
+    }
+
+    private fun drawPolygonOnMap(map: GoogleMap) {
+        val polygonLats = intent.getDoubleArrayExtra(EXTRA_POLYGON_LATS) ?: doubleArrayOf()
+        val polygonLngs = intent.getDoubleArrayExtra(EXTRA_POLYGON_LNGS) ?: doubleArrayOf()
+        if (polygonLats.isEmpty()) return
+        val polygonPoints = polygonLats.indices.map { i -> LatLng(polygonLats[i], polygonLngs[i]) }
+        map.addPolygon(
+            PolygonOptions()
+                .addAll(polygonPoints)
+                .strokeColor(0xFF39D98A.toInt())
+                .strokeWidth(3f)
+                .fillColor(0x1A39D98A)
+        )
+    }
+
     private fun toggleView() {
         showing3d = !showing3d
         binding.heightmapContainer.visibility = if (showing3d) android.view.View.VISIBLE else android.view.View.GONE
-        // Harita Fragment'ı XML'de tanımlı olduğu için view'ını doğrudan gizliyoruz/gösteriyoruz.
         mapFragmentView()?.visibility = if (showing3d) android.view.View.GONE else android.view.View.VISIBLE
         binding.btnToggleView.setText(
             if (showing3d) com.arkeosar.satellite.R.string.btn_view_map else com.arkeosar.satellite.R.string.btn_view_3d
@@ -86,19 +209,14 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
     private fun mapFragmentView(): android.view.View? =
         supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment)?.view
 
-    /** HeightmapGrid verisini Intent'ten okuyup GLSurfaceView'i kurar (henüz görünür değil). */
+    /** GLSurfaceView'i kurar (henüz görünür değil) - orijinal (filtresiz) grid ile başlar. */
     private fun setupHeightmapView() {
-        val width = intent.getIntExtra(EXTRA_HEIGHTMAP_WIDTH, 0)
-        val height = intent.getIntExtra(EXTRA_HEIGHTMAP_HEIGHT, 0)
-        val scores = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_SCORES)
-
-        if (width <= 0 || height <= 0 || scores == null || scores.size != width * height) {
-            // Heightmap verisi yoksa (örn. eski bir Intent ya da hata durumu) 3D butonu devre dışı.
+        val grid = originalGrid
+        if (grid == null) {
             binding.btnToggleView.isEnabled = false
             return
         }
 
-        val grid = HeightmapGrid(width = width, height = height, scores = scores)
         val renderer = HeightmapGlRenderer(grid)
         heightmapRenderer = renderer
 
@@ -123,7 +241,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         glSurfaceView = surfaceView
         binding.heightmapContainer.addView(
             surfaceView,
-            0, // hintText'in altında kalmasın diye index 0'a (en alta) ekleniyor
+            0,
             android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT
@@ -133,48 +251,26 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
 
     override fun onMapReady(map: GoogleMap) {
         map.mapType = GoogleMap.MAP_TYPE_HYBRID
+        googleMap = map
+
+        drawPolygonOnMap(map)
+
+        // Başlangıçta (filtre seçilmeden) orijinal grid'i normalize edip çiz.
+        originalGrid?.let { grid ->
+            redrawMapOverlay(normalizeToUnitRange(grid.scores))
+        }
 
         val polygonLats = intent.getDoubleArrayExtra(EXTRA_POLYGON_LATS) ?: doubleArrayOf()
         val polygonLngs = intent.getDoubleArrayExtra(EXTRA_POLYGON_LNGS) ?: doubleArrayOf()
-        val cellLats = intent.getDoubleArrayExtra(EXTRA_CELL_LATS) ?: doubleArrayOf()
-        val cellLngs = intent.getDoubleArrayExtra(EXTRA_CELL_LNGS) ?: doubleArrayOf()
-        val cellScores = intent.getDoubleArrayExtra(EXTRA_CELL_SCORES) ?: doubleArrayOf()
-
         if (polygonLats.isEmpty()) return
-
         val polygonPoints = polygonLats.indices.map { i -> LatLng(polygonLats[i], polygonLngs[i]) }
 
-        map.addPolygon(
-            PolygonOptions()
-                .addAll(polygonPoints)
-                .strokeColor(0xFF39D98A.toInt())
-                .strokeWidth(3f)
-                .fillColor(0x1A39D98A)
-        )
-
-        // Anomali hücrelerini skor bazlı renklendirilmiş daireler olarak çiz -
-        // yüksek skor (anomali olasılığı yüksek) turuncu/kırmızıya yakın, düşük skor
-        // şeffaf/soluk renkte gösterilir.
-        for (i in cellLats.indices) {
-            val score = cellScores.getOrElse(i) { 0.0 }.coerceIn(0.0, 1.0)
-            val color = scoreToColor(score)
-            map.addCircle(
-                CircleOptions()
-                    .center(LatLng(cellLats[i], cellLngs[i]))
-                    .radius(15.0)
-                    .fillColor(color)
-                    .strokeWidth(0f)
-            )
-        }
-
-        // Kamerayı polygon sınırlarına otomatik sığdır.
         val boundsBuilder = LatLngBounds.Builder()
         polygonPoints.forEach { boundsBuilder.include(it) }
         try {
             map.moveCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 80))
         } catch (e: IllegalStateException) {
-            // Harita henüz layout'u tamamlamamış olabilir (boyutu 0) - sessizce geç,
-            // kullanıcı haritayı zoom/pan ile kendi inceleyebilir.
+            // Harita henüz layout'u tamamlamamış olabilir (boyutu 0) - sessizce geç.
         }
     }
 
