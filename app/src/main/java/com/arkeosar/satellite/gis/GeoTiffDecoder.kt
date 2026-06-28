@@ -104,9 +104,16 @@ object GeoTiffDecoder {
         val bitsPerSample = if (bitsPerSampleEntry != null) {
             readValueArray(buffer, bitsPerSampleEntry).first()
         } else 32
+        // BitsPerSample VE SampleFormat tag'leri count>1 olabilir (her bant için ayrı, ama
+        // pratikte tüm bantlar aynı değeri taşır). count>1 ise valueOrOffset alanı bir OFFSET'tir,
+        // doğrudan değer DEĞİLDİR - bu yüzden ikisi de readValueArray ile okunmalı, doğrudan
+        // .valueOrOffset ile OKUNMAMALIDIR (bu, count>1 durumunda yanlış/anlamsız bir sayı verir).
+        val sampleFormatEntry = entries.find(TAG_SAMPLE_FORMAT)
+        val sampleFormat = if (sampleFormatEntry != null) {
+            readValueArray(buffer, sampleFormatEntry).first()
+        } else 3
         val compression = entries.find(TAG_COMPRESSION)?.valueOrOffset ?: COMPRESSION_NONE
         val predictor = entries.find(TAG_PREDICTOR)?.valueOrOffset ?: 1
-        val sampleFormat = entries.find(TAG_SAMPLE_FORMAT)?.valueOrOffset ?: 3
         val samplesPerPixel = entries.find(TAG_SAMPLES_PER_PIXEL)?.valueOrOffset ?: 1
         val rowsPerStrip = entries.find(TAG_ROWS_PER_STRIP)?.valueOrOffset ?: height
         val planarConfig = entries.find(TAG_PLANAR_CONFIG)?.valueOrOffset ?: PLANAR_CONFIG_CHUNKY
@@ -439,6 +446,24 @@ object GeoTiffDecoder {
         }
     }
 
+    /**
+     * TIFF IFD entry kuralı (doğrulanmış, bkz. proje notları): bir tag'in DEĞERİ toplamda
+     * 4 byte'a sığıyorsa (count * bytesPerType <= 4), value alanının kendisi DOĞRUDAN o
+     * değer(ler)i içerir (inline) - OFFSET DEĞİLDİR. Sadece toplam veri 4 byte'ı AŞARSA,
+     * value alanı gerçek verinin dosyadaki konumuna işaret eden bir offset olur.
+     *
+     * Önceki hatalı varsayım: "count==1 ise inline, count>1 ise her zaman offset" - bu YANLIŞ.
+     * Örnek: BitsPerSample count=2, type=SHORT(2 byte) -> 2*2=4 byte, ki bu tam 4 byte'a sığar,
+     * dolayısıyla İKİ DEĞER DE value alanının içinde inline olarak saklanır, offset değildir.
+     * Bu hata gerçek bir Sentinel Hub TIFF'inde test edilerek bulundu ve doğrulandı.
+     */
+    private fun bytesPerType(type: Int): Int = when (type) {
+        1, 2, 6, 7 -> 1 // BYTE, ASCII, SBYTE, UNDEFINED
+        3, 8 -> 2       // SHORT, SSHORT
+        4, 9, 11 -> 4   // LONG, SLONG, FLOAT
+        else -> 4
+    }
+
     private fun readIfd(buffer: ByteBuffer, offset: Int): List<IfdEntry> {
         val entryCount = buffer.getShort(offset).toInt() and 0xFFFF
         val entries = mutableListOf<IfdEntry>()
@@ -447,13 +472,22 @@ object GeoTiffDecoder {
             val tag = buffer.getShort(cursor).toInt() and 0xFFFF
             val type = buffer.getShort(cursor + 2).toInt() and 0xFFFF
             val count = buffer.getInt(cursor + 4)
-            // TIFF spec: count==1 ve type SHORT(3) ise değer, 4 byte'lık value alanının
-            // İLK 2 byte'ındadır (little-endian'da), kalan 2 byte tanımsız/padding olabilir.
-            // Bunu 4 byte int olarak okumak padding'in sıfır olduğunu varsayar - bu garanti
-            // değildir, dolayısıyla type'a göre doğru genişlikte okuyoruz.
+            val valueFieldPosition = cursor + 8
+            val bpv = bytesPerType(type)
+
             val valueOrOffset = when {
-                count == 1 && type == 3 -> buffer.getShort(cursor + 8).toInt() and 0xFFFF // SHORT
-                else -> buffer.getInt(cursor + 8) // LONG, ya da count>1 (offset her durumda 4 byte)
+                // count==1: HER ZAMAN gerçek değeri doğrudan oku (type'a uygun genişlikte).
+                // Bu, type'tan bağımsız genel bir kuraldır - sadece SHORT için değil.
+                count == 1 -> when (bpv) {
+                    2 -> buffer.getShort(valueFieldPosition).toInt() and 0xFFFF
+                    1 -> buffer.get(valueFieldPosition).toInt() and 0xFF
+                    else -> buffer.getInt(valueFieldPosition)
+                }
+                // count>1 ama toplam veri <=4 byte'a sığıyor: inline, kendi pozisyonundan
+                // SIRALI okunacak (readValueArray bunu yapar) - OFFSET DEĞİL.
+                (bpv.toLong() * count) <= 4L -> valueFieldPosition
+                // Aksi halde gerçek bir offset - dosyanın başka yerindeki veriye işaret eder.
+                else -> buffer.getInt(valueFieldPosition)
             }
             entries.add(IfdEntry(tag, type, count, valueOrOffset))
             cursor += 12
@@ -464,25 +498,27 @@ object GeoTiffDecoder {
     private fun List<IfdEntry>.find(tag: Int): IfdEntry? = firstOrNull { it.tag == tag }
 
     /**
-     * StripOffsets/StripByteCounts gibi tag'ler, count>1 olduğunda value alanı
-     * doğrudan değer değil, değerlerin saklandığı yere bir offset içerir.
-     * count==1 ise value alanı doğrudan değerin kendisidir (TIFF'in "inline value" optimizasyonu).
+     * Bir IFD entry'sinin değer dizisini okur.
+     *
+     * TIFF kuralı (gerçek Sentinel Hub TIFF'i ile doğrulanmış - bkz. readIfd dokümantasyonu):
+     * bir tag'in değeri toplamda 4 byte'a sığıyorsa (count * bytesPerType <= 4), value alanı
+     * DOĞRUDAN o değeri/değerleri içerir; aksi halde value alanı bir OFFSET'tir. count==1
+     * durumu readIfd'de ZATEN doğru şekilde çözülmüştür (gerçek değer, type genişliğinde).
+     * count>1 durumunda valueOrOffset, ister inline kendi pozisyonu ister gerçek offset olsun,
+     * "değerlerin SIRALI okunacağı başlangıç pozisyonu" anlamına gelir - okuma mantığı ikisi
+     * için de AYNIDIR, fark sadece bu pozisyonun nasıl hesaplandığındadır (readIfd'de çözülür).
      */
     private fun readValueArray(buffer: ByteBuffer, entry: IfdEntry): IntArray {
         if (entry.count == 1) return intArrayOf(entry.valueOrOffset)
 
         val result = IntArray(entry.count)
-        val bytesPerValue = when (entry.type) {
-            3 -> 2 // SHORT
-            4 -> 4 // LONG
-            else -> throw IllegalStateException("Desteklenmeyen IFD value tipi: ${entry.type}")
-        }
+        val bytesPerValue = bytesPerType(entry.type)
         var cursor = entry.valueOrOffset
         for (i in 0 until entry.count) {
-            result[i] = if (bytesPerValue == 2) {
-                buffer.getShort(cursor).toInt() and 0xFFFF
-            } else {
-                buffer.getInt(cursor)
+            result[i] = when (bytesPerValue) {
+                2 -> buffer.getShort(cursor).toInt() and 0xFFFF
+                1 -> buffer.get(cursor).toInt() and 0xFF
+                else -> buffer.getInt(cursor)
             }
             cursor += bytesPerValue
         }
