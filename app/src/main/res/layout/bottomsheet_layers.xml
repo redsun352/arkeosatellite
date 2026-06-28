@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
+<ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+<LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -54,6 +58,64 @@
         android:checked="false"
         app:buttonTint="@color/accent_thermal" />
 
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="12dp"
+        android:background="@color/border_subtle" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/season_title"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:layout_marginBottom="10dp"
+        android:text="@string/season_subtitle"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp" />
+
+    <RadioGroup
+        android:id="@+id/radioGroupSeason"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <RadioButton
+            android:id="@+id/radioSeasonSummer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/season_summer_drought"
+            android:textColor="@color/text_primary"
+            android:checked="true"
+            app:buttonTint="@color/accent_scan" />
+
+        <RadioButton
+            android:id="@+id/radioSeasonSpring"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/season_spring"
+            android:textColor="@color/text_primary"
+            app:buttonTint="@color/accent_scan" />
+
+        <RadioButton
+            android:id="@+id/radioSeasonRecent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/season_recent"
+            android:textColor="@color/text_primary"
+            app:buttonTint="@color/accent_scan" />
+
+    </RadioGroup>
+
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnApplyLayers"
         android:layout_width="match_parent"
@@ -64,3 +126,4 @@
         android:textColor="@color/bg_base" />
 
 </LinearLayout>
+</ScrollView>

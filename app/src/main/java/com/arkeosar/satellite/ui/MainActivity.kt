@@ -14,6 +14,7 @@ import com.arkeosar.satellite.gis.AnalysisOrchestrator
 import com.arkeosar.satellite.map.DrawTool
 import com.arkeosar.satellite.map.ShapeDrawController
 import com.arkeosar.satellite.model.ScanPolygon
+import com.arkeosar.satellite.network.DateRange
 import com.arkeosar.satellite.network.SatelliteDataSource
 import com.arkeosar.satellite.network.copernicus.CopernicusDataSource
 import com.arkeosar.satellite.network.planet.PlanetDataSource
@@ -25,6 +26,10 @@ import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+
+/** Kullanıcının seçebileceği mevsim presetleri - crop-mark tespiti mevsime bağımlıdır. */
+private enum class SeasonPreset { SUMMER_DROUGHT, SPRING, RECENT_30_DAYS }
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -37,6 +42,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var sentinel2Enabled = true
     private var planetEnabled = true
     private var usgsEnabled = false
+    private var seasonPreset = SeasonPreset.SUMMER_DROUGHT
 
     private val sources: List<SatelliteDataSource>
         get() = buildList {
@@ -44,6 +50,37 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             if (planetEnabled) add(PlanetDataSource())
             if (usgsEnabled) add(UsgsDataSource())
         }
+
+    /**
+     * Seçili mevsim presetine göre mutlak bir DateRange üretir. "Bu yıl" varsayımı
+     * kullanılır - eğer seçilen mevsim henüz gelmediyse (örn. Ocak ayında "yaz kuraklığı"
+     * seçilirse), geçen yılın aynı dönemi kullanılır, çünkü gelecekteki bir tarih için
+     * uydu verisi mevcut olamaz.
+     */
+    private fun resolveDateRange(): DateRange {
+        val today = LocalDate.now()
+        return when (seasonPreset) {
+            SeasonPreset.RECENT_30_DAYS -> DateRange(from = today.minusDays(30), to = today)
+            SeasonPreset.SUMMER_DROUGHT -> {
+                var from = LocalDate.of(today.year, 6, 1)
+                var to = LocalDate.of(today.year, 8, 31)
+                if (to.isAfter(today)) { // bu yılın yazı henüz gelmedi/bitmedi -> geçen yılı kullan
+                    from = from.minusYears(1)
+                    to = to.minusYears(1)
+                }
+                DateRange(from = from, to = minOf(to, today))
+            }
+            SeasonPreset.SPRING -> {
+                var from = LocalDate.of(today.year, 3, 1)
+                var to = LocalDate.of(today.year, 4, 30)
+                if (to.isAfter(today)) {
+                    from = from.minusYears(1)
+                    to = to.minusYears(1)
+                }
+                DateRange(from = from, to = minOf(to, today))
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -155,7 +192,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         )
     }
 
-    /** Uydu kaynağı seçici bottom sheet'i gösterir. */
+    /** Uydu kaynağı ve mevsim seçici bottom sheet'i gösterir. */
     private fun showLayerSelector() {
         val sheetBinding = BottomsheetLayersBinding.inflate(layoutInflater)
         val dialog = BottomSheetDialog(this)
@@ -164,6 +201,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         sheetBinding.checkSentinel2.isChecked = sentinel2Enabled
         sheetBinding.checkPlanet.isChecked = planetEnabled
         sheetBinding.checkUsgs.isChecked = usgsEnabled
+
+        when (seasonPreset) {
+            SeasonPreset.SUMMER_DROUGHT -> sheetBinding.radioSeasonSummer.isChecked = true
+            SeasonPreset.SPRING -> sheetBinding.radioSeasonSpring.isChecked = true
+            SeasonPreset.RECENT_30_DAYS -> sheetBinding.radioSeasonRecent.isChecked = true
+        }
 
         sheetBinding.btnApplyLayers.setOnClickListener {
             val anySelected = sheetBinding.checkSentinel2.isChecked ||
@@ -178,6 +221,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             sentinel2Enabled = sheetBinding.checkSentinel2.isChecked
             planetEnabled = sheetBinding.checkPlanet.isChecked
             usgsEnabled = sheetBinding.checkUsgs.isChecked
+
+            seasonPreset = when (sheetBinding.radioGroupSeason.checkedRadioButtonId) {
+                sheetBinding.radioSeasonSpring.id -> SeasonPreset.SPRING
+                sheetBinding.radioSeasonRecent.id -> SeasonPreset.RECENT_30_DAYS
+                else -> SeasonPreset.SUMMER_DROUGHT
+            }
+
             dialog.dismiss()
         }
 
@@ -196,8 +246,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
         lifecycleScope.launch {
             try {
+                val dateRange = resolveDateRange()
                 val orchestrator = AnalysisOrchestrator(sources)
-                val result = orchestrator.analyze(polygon)
+                val result = orchestrator.analyze(polygon, dateRange)
 
                 showStatus(getString(R.string.status_done))
                 val failedSourcesText = result.failedSources.joinToString("\n") { (name, msg) -> "$name: $msg" }

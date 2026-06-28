@@ -26,6 +26,18 @@ data class SourceScene(
 )
 
 /**
+ * Sorgulanacak tarih aralığını temsil eder - LocalDate tabanlı (saat dilimi/saat
+ * bilgisi taşımaz, sadece takvim günü). Her uydu kaynağı, kendi API'sinin beklediği
+ * formata (ISO-8601 datetime, "YYYY-MM-DD" vb.) kendi içinde çevirir - bu sayede
+ * tek bir DateRange modeli tüm kaynaklarla uyumlu kalır.
+ *
+ * Crop-mark/bitki örtüsü stresi tespiti mevsime çok bağımlıdır (bkz. AnalysisOrchestrator
+ * ve MainActivity'deki mevsim seçici notları) - bu yüzden "son N gün" yerine kullanıcının
+ * (ya da önceden tanımlı mevsim presetlerinin) belirlediği mutlak bir aralık kullanılır.
+ */
+data class DateRange(val from: java.time.LocalDate, val to: java.time.LocalDate)
+
+/**
  * Her uydu kaynağı (GEE/Sentinel-2, Copernicus, USGS/Landsat, ASTER) bu arayüzü
  * implemente eder. GEE için kimlik doğrulama OAuth2/service-account ile,
  * Copernicus/USGS için standart API key/OAuth client-credentials ile yapılır -
@@ -35,9 +47,9 @@ interface SatelliteDataSource {
     val source: SatelliteSource
 
     /**
-     * Verilen bölge için gerekli bantları indirir.
+     * Verilen bölge ve tarih aralığı için gerekli bantları indirir.
      * @param bbox sorgu bölgesi (polygon'un bounding box'ı)
-     * @param maxAgeDays en güncel kaç gün içindeki sahneyi tercih et (bulutsuz sahne arama toleransı)
+     * @param dateRange sorgulanacak mutlak tarih aralığı (mevsim seçimi MainActivity'de yapılır)
      */
-    suspend fun fetchScene(bbox: BoundingBox, maxAgeDays: Int = 30): SourceScene
+    suspend fun fetchScene(bbox: BoundingBox, dateRange: DateRange): SourceScene
 }

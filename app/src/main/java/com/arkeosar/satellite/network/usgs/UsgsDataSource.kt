@@ -3,6 +3,7 @@ package com.arkeosar.satellite.network.usgs
 import com.arkeosar.satellite.gis.GeoTiffDecoder
 import com.arkeosar.satellite.model.BoundingBox
 import com.arkeosar.satellite.model.SatelliteSource
+import com.arkeosar.satellite.network.DateRange
 import com.arkeosar.satellite.network.RetrofitFactory
 import com.arkeosar.satellite.network.SatelliteDataSource
 import com.arkeosar.satellite.network.SecureConfig
@@ -10,9 +11,6 @@ import com.arkeosar.satellite.network.SourceScene
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import retrofit2.create
-import java.time.Instant
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 
 /**
  * USGS M2M API üzerinden Landsat Collection 2 Level-2 (TIRS termal bant içerir) sahnesi bulur ve indirir.
@@ -25,7 +23,8 @@ import java.time.temporal.ChronoUnit
  *  5. URL'den GeoTIFF indir ve decode et
  *
  * Dataset adı "landsat_ot_c2_l2" (Landsat 8/9 OLI/TIRS Collection 2 Level-2) kullanılıyor -
- * bu, termal bant (ST_B10, yüzey sıcaklığı) içeren standart üründür.
+ * bu, termal bant (ST_B10, yüzey sıcaklığı) içeren standart üründür. Tarih aralığı artık
+ * mutlak bir aralıktır (mevsim seçici - bkz. MainActivity).
  */
 class UsgsDataSource : SatelliteDataSource {
 
@@ -72,13 +71,10 @@ class UsgsDataSource : SatelliteDataSource {
         }
     }
 
-    override suspend fun fetchScene(bbox: BoundingBox, maxAgeDays: Int): SourceScene = withContext(Dispatchers.IO) {
+    override suspend fun fetchScene(bbox: BoundingBox, dateRange: DateRange): SourceScene = withContext(Dispatchers.IO) {
         val authToken = getAuthToken()
 
-        val now = Instant.now()
-        val from = now.minus(maxAgeDays.toLong(), ChronoUnit.DAYS)
-        val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE.withZone(java.time.ZoneOffset.UTC)
-
+        // USGS scene-search "YYYY-MM-DD" formatı bekliyor (LocalDate.toString() zaten bu formatı üretir - ISO_LOCAL_DATE).
         val searchRequest = SceneSearchRequest(
             datasetName = DATASET_NAME,
             sceneFilter = SceneFilter(
@@ -86,7 +82,7 @@ class UsgsDataSource : SatelliteDataSource {
                     lowerLeft = LatLng(latitude = bbox.minLat, longitude = bbox.minLng),
                     upperRight = LatLng(latitude = bbox.maxLat, longitude = bbox.maxLng)
                 ),
-                acquisitionFilter = AcquisitionFilter(start = dateFmt.format(from), end = dateFmt.format(now)),
+                acquisitionFilter = AcquisitionFilter(start = dateRange.from.toString(), end = dateRange.to.toString()),
                 cloudCoverFilter = CloudCoverFilter(min = 0, max = 40, includeUnknown = true)
             ),
             maxResults = 5

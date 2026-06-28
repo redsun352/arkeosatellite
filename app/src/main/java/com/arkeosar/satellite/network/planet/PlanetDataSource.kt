@@ -3,6 +3,7 @@ package com.arkeosar.satellite.network.planet
 import com.arkeosar.satellite.gis.GeoTiffDecoder
 import com.arkeosar.satellite.model.BoundingBox
 import com.arkeosar.satellite.model.SatelliteSource
+import com.arkeosar.satellite.network.DateRange
 import com.arkeosar.satellite.network.RetrofitFactory
 import com.arkeosar.satellite.network.SatelliteDataSource
 import com.arkeosar.satellite.network.SecureConfig
@@ -11,8 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import retrofit2.create
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 
 /**
  * Planet Data API üzerinden PSScene (PlanetScope) görüntüsü bulur ve indirir.
@@ -24,11 +23,11 @@ import java.time.temporal.ChronoUnit
  *  4. Asset "active" olana kadar polling yap (status alanı)
  *  5. location URL'inden gerçek raster dosyasını indir (GeoTIFF)
  *
- * NOT: Planet'ın "ortho_analytic_4b_sr" gibi asset'leri çok-bantlı GeoTIFF'tir.
- * Bu basitleştirilmiş implementasyon tek bant okuyabilen GeoTiffDecoder ile
- * sınırlı olduğundan, ileri analizde NDVI hesaplaması için B4(NIR)/B3(Red)
- * bantlarının ayrı ayrı çıkarılması gerekecek - bu, decoder'a çok-bant desteği
- * eklenene kadar bir TODO olarak işaretlenmiştir.
+ * Tarih aralığı, çağıran kodun (MainActivity'deki mevsim seçici) belirlediği MUTLAK
+ * bir aralıktır - "son N gün" değil, çünkü crop-mark tespiti mevsime bağımlıdır.
+ *
+ * NOT: Planet'ın 4-bant (BGRN) ürünlerinde SWIR bandı yoktur, bu yüzden NDWI (NIR-SWIR)
+ * Planet kaynağından hesaplanamaz - sadece NDVI (RED/NIR) hesaplanır.
  */
 class PlanetDataSource : SatelliteDataSource {
 
@@ -40,9 +39,10 @@ class PlanetDataSource : SatelliteDataSource {
 
     private fun authHeader() = "api-key ${SecureConfig.Planet.apiKey}"
 
-    override suspend fun fetchScene(bbox: BoundingBox, maxAgeDays: Int): SourceScene = withContext(Dispatchers.IO) {
-        val now = Instant.now()
-        val from = now.minus(maxAgeDays.toLong(), ChronoUnit.DAYS)
+    override suspend fun fetchScene(bbox: BoundingBox, dateRange: DateRange): SourceScene = withContext(Dispatchers.IO) {
+        // Planet ISO-8601 datetime bekliyor - LocalDate'leri gün başı/gün sonu olarak çeviriyoruz.
+        val fromIso = dateRange.from.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toString()
+        val toIso = dateRange.to.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toString()
 
         val geometry = mapOf(
             "type" to "Polygon",
@@ -69,7 +69,7 @@ class PlanetDataSource : SatelliteDataSource {
                     mapOf(
                         "type" to "DateRangeFilter",
                         "field_name" to "acquired",
-                        "config" to mapOf("gte" to from.toString(), "lte" to now.toString())
+                        "config" to mapOf("gte" to fromIso, "lte" to toIso)
                     ),
                     mapOf(
                         "type" to "RangeFilter",

@@ -34,4 +34,10 @@
     <string name="layer_usgs">Landsat TIRS (Termal)</string>
     <string name="layer_apply">Uygula</string>
     <string name="error_no_layer_selected">En az bir uydu kaynağı seçmelisiniz.</string>
+
+    <string name="season_title">Tarama Mevsimi</string>
+    <string name="season_subtitle">Bitki örtüsü stresi (crop-mark) tespiti mevsime bağlıdır - kuraklık dönemleri en güvenilir sonucu verir.</string>
+    <string name="season_summer_drought">Yaz Kuraklığı (Haziran - Ağustos, bu yıl)</string>
+    <string name="season_spring">İlkbahar (Mart - Nisan, bu yıl)</string>
+    <string name="season_recent">Son 30 gün</string>
 </resources>

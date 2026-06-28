@@ -2,7 +2,7 @@ package com.arkeosar.satellite.network.copernicus
 
 import com.arkeosar.satellite.model.BoundingBox
 import com.arkeosar.satellite.model.SatelliteSource
-import com.arkeosar.satellite.network.BandRaster
+import com.arkeosar.satellite.network.DateRange
 import com.arkeosar.satellite.network.RetrofitFactory
 import com.arkeosar.satellite.network.SatelliteDataSource
 import com.arkeosar.satellite.network.SecureConfig
@@ -10,22 +10,19 @@ import com.arkeosar.satellite.network.SourceScene
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import retrofit2.create
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 /**
- * Copernicus Data Space / Sentinel Hub Process API üzerinden Sentinel-2 NDVI verisi çeker.
+ * Copernicus Data Space / Sentinel Hub Process API üzerinden Sentinel-2 NDVI+NDWI verisi çeker.
  *
  * Akış:
  *  1. client_id/client_secret ile OAuth2 token al (1 saat geçerli, cache'lenir)
  *  2. Process API'ye evalscript + bbox + zaman aralığı ile POST isteği gönder
- *  3. Dönen GeoTIFF'i (tek bant, FLOAT32) ayrıştır -> BandRaster
+ *  3. Dönen 2-bantlı GeoTIFF'i (NDVI + NDWI/NIR-SWIR) ayrıştır -> BandRaster'lar
  *
- * NOT: GeoTIFF ayrıştırma burada basitleştirilmiş - gerçek implementasyonda
- * bir TIFF decoder (örn. küçük bir libtiff bağlama veya kendi yazılan basit
- * okuyucu) gerekir. Bu sınıf, ağ/auth katmanını eksiksiz kurar; raster
- * decode kısmı GeoTiffDecoder'a devredilir (ayrı adımda yazılacak).
+ * Tarih aralığı artık "son N gün" değil, çağıran kodun (MainActivity'deki mevsim
+ * seçici) belirlediği MUTLAK bir aralıktır - çünkü crop-mark/bitki stresi tespiti
+ * mevsime çok bağımlıdır (bkz. AnalysisOrchestrator dokümantasyonu).
  */
 class CopernicusDataSource : SatelliteDataSource {
 
@@ -56,11 +53,12 @@ class CopernicusDataSource : SatelliteDataSource {
         response.access_token
     }
 
-    override suspend fun fetchScene(bbox: BoundingBox, maxAgeDays: Int): SourceScene = withContext(Dispatchers.IO) {
+    override suspend fun fetchScene(bbox: BoundingBox, dateRange: DateRange): SourceScene = withContext(Dispatchers.IO) {
         val token = getToken()
 
-        val now = Instant.now()
-        val from = now.minus(maxAgeDays.toLong(), ChronoUnit.DAYS)
+        // Sentinel Hub ISO-8601 datetime bekliyor - LocalDate'leri gün başı/gün sonu olarak çeviriyoruz.
+        val fromIso = dateRange.from.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toString()
+        val toIso = dateRange.to.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toString()
 
         val request = ProcessApiRequest(
             input = ProcessInput(
@@ -69,14 +67,14 @@ class CopernicusDataSource : SatelliteDataSource {
                     ProcessDataSource(
                         type = "sentinel-2-l2a",
                         dataFilter = ProcessDataFilter(
-                            timeRange = ProcessTimeRange(from = from.toString(), to = now.toString()),
+                            timeRange = ProcessTimeRange(from = fromIso, to = toIso),
                             maxCloudCoverage = SecureConfig.Copernicus.cloudMax
                         )
                     )
                 )
             ),
             output = ProcessOutput(width = 512, height = 512),
-            evalscript = Evalscripts.ndvi
+            evalscript = Evalscripts.ndviAndNdwi
         )
 
         val response = processApi.process(bearerToken = "Bearer $token", request = request)
@@ -89,15 +87,15 @@ class CopernicusDataSource : SatelliteDataSource {
         val tiffBytes = response.body()?.bytes()
             ?: throw IllegalStateException("Copernicus Process API boş yanıt döndü")
 
-        val raster = com.arkeosar.satellite.gis.GeoTiffDecoder.decodeSingleBand(
+        val bandRasters = com.arkeosar.satellite.gis.GeoTiffDecoder.decodeMultiBand(
             tiffBytes = tiffBytes,
             bbox = bbox,
-            bandName = "NDVI"
+            bandNames = listOf("NDVI", "NDWI")
         )
 
         SourceScene(
             source = source,
-            bands = mapOf("NDVI" to raster),
+            bands = bandRasters,
             acquiredEpochMs = System.currentTimeMillis()
         )
     }

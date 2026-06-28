@@ -5,6 +5,7 @@ import com.arkeosar.satellite.model.AnomalyCell
 import com.arkeosar.satellite.model.ScanPolygon
 import com.arkeosar.satellite.model.SatelliteSource
 import com.arkeosar.satellite.network.BandRaster
+import com.arkeosar.satellite.network.DateRange
 import com.arkeosar.satellite.network.SatelliteDataSource
 import com.arkeosar.satellite.network.SourceScene
 import com.google.maps.android.PolyUtil
@@ -23,7 +24,7 @@ import kotlinx.coroutines.coroutineScope
  */
 class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
 
-    suspend fun analyze(polygon: ScanPolygon): AnalysisResult = coroutineScope {
+    suspend fun analyze(polygon: ScanPolygon, dateRange: DateRange): AnalysisResult = coroutineScope {
         val bbox = polygon.boundingBox()
 
         // Her kaynaktan paralel olarak veri çek - biri başarısız olursa diğerleri etkilenmesin
@@ -31,7 +32,7 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         // hangi sonucu/hatayı ürettiğini eşleştirebilmek için (sourceType, result) çifti tutuyoruz.
         val sceneResults = sources.map { dataSource ->
             async {
-                dataSource.source to runCatching { dataSource.fetchScene(bbox) }
+                dataSource.source to runCatching { dataSource.fetchScene(bbox, dateRange) }
             }
         }.awaitAll()
 
@@ -62,12 +63,12 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
      * Her piksel konumu için, polygon içindeyse ve mevcut bantlardan bir anomali
      * skoru hesaplanabiliyorsa bir AnomalyCell üretir.
      *
-     * Basit skor mantığı (V1):
-     *  - NDVI bandı varsa: düşük NDVI (bitki örtüsü stresi/yokluğu) potansiyel
-     *    yeraltı yapısı sinyali olarak yorumlanır (klasik arkeolojik crop-mark mantığı,
-     *    ArkeoSAR Pro'daki yaklaşımla aynı). Skor = clamp(1 - (ndvi+1)/2, 0, 1)
-     *  - LST (yüzey sıcaklığı) bandı varsa: yerel ortalamadan anlamlı sapma
-     *    (örn. gömülü duvar/taş yapı üstündeki termal atalet farkı) skor olarak eklenir.
+     * Skor mantığı (V1.1 - yerel sapma/z-score tabanlı):
+     *  - Her bant (NDVI, LST) için önce TÜM rasterin ortalaması ve standart sapması hesaplanır.
+     *  - Her pikselin skoru, o pikselin bölge ortalamasından KAÇ STANDART SAPMA uzakta
+     *    olduğuna (z-score) göre belirlenir - MUTLAK bir "düşük NDVI = anomali" eşiği
+     *    KULLANILMAZ, çünkü bu çorak/kurak arazilerde (NDVI genel olarak düşük) anlamsız
+     *    sonuçlar üretir (bkz. zScoreToAnomalyScore dokümantasyonu).
      *  - Birden fazla kaynak varsa skorlar ortalanır (basit ensemble).
      */
     private fun computeAnomalyCells(scenes: List<SourceScene>, polygon: ScanPolygon): List<AnomalyCell> {
@@ -79,6 +80,13 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         // sadece ilk sahnenin grid'i kullanılıyor, diğer kaynaklar aynı grid'e en yakın
         // örnekleme ile haritalanıyor (nearest-neighbor).
         val referenceRaster = scenes.first().bands.values.first()
+
+        // Her sahne için istatistikleri (mean/std) BİR KERE, döngü dışında hesapla.
+        // computeScoreAt her piksel için çağrılacağı için, istatistikleri piksel-piksel
+        // yeniden hesaplamak O(n²) karmaşıklık yaratırdı - büyük polygonlarda uygulamayı
+        // donduracak kadar yavaş olurdu. Önbelleklenen istatistikler bu fonksiyona parametre
+        // olarak geçilir.
+        val statsCache = buildStatsCache(scenes)
 
         val cells = mutableListOf<AnomalyCell>()
 
@@ -94,7 +102,7 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
                     continue // polygon dışı - kullanıcı isteği: dışı taranmaz/analiz edilmez
                 }
 
-                val (score, contributingFilters) = computeScoreAt(scenes, referenceRaster, row, col)
+                val (score, contributingFilters) = computeScoreAt(scenes, referenceRaster, row, col, statsCache)
                 if (contributingFilters.isNotEmpty()) {
                     cells.add(AnomalyCell(lat = lat, lng = lng, score = score, contributingFilters = contributingFilters))
                 }
@@ -104,11 +112,55 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         return cells
     }
 
+    private data class BandStats(val mean: Double, val std: Double)
+    private data class StatsKey(val source: SatelliteSource, val bandName: String)
+
+    /** Her sahne/bant kombinasyonu için gerekli istatistikleri (mean+std) bir kere hesaplar. */
+    private fun buildStatsCache(scenes: List<SourceScene>): Map<StatsKey, BandStats> {
+        val cache = mutableMapOf<StatsKey, BandStats>()
+        for (scene in scenes) {
+            when (scene.source) {
+                SatelliteSource.SENTINEL_2 -> {
+                    scene.bands["NDVI"]?.let { raster ->
+                        cache[StatsKey(scene.source, "NDVI")] = computeStats(raster.values.map { it.toDouble() })
+                    }
+                    scene.bands["NDWI"]?.let { raster ->
+                        cache[StatsKey(scene.source, "NDWI")] = computeStats(raster.values.map { it.toDouble() })
+                    }
+                }
+                SatelliteSource.LANDSAT_TIRS -> {
+                    val lstRaster = scene.bands["LST"] ?: continue
+                    cache[StatsKey(scene.source, "LST")] = computeStats(lstRaster.values.map { it.toDouble() })
+                }
+                SatelliteSource.PLANET -> {
+                    val redRaster = scene.bands["RED"] ?: continue
+                    val nirRaster = scene.bands["NIR"] ?: continue
+                    val ndviValues = DoubleArray(redRaster.values.size)
+                    for (i in redRaster.values.indices) {
+                        val r = redRaster.values[i]
+                        val n = nirRaster.values[i]
+                        ndviValues[i] = if (n + r > 1e-6) ((n - r) / (n + r)).toDouble() else 0.0
+                    }
+                    cache[StatsKey(scene.source, "NDVI")] = computeStats(ndviValues.toList())
+                }
+                else -> { /* ASTER_TIR: henüz dahil değil */ }
+            }
+        }
+        return cache
+    }
+
+    private fun computeStats(values: List<Double>): BandStats {
+        val mean = values.average()
+        val std = kotlin.math.sqrt(values.map { (it - mean) * (it - mean) }.average())
+        return BandStats(mean, std)
+    }
+
     private fun computeScoreAt(
         scenes: List<SourceScene>,
         referenceRaster: BandRaster,
         row: Int,
-        col: Int
+        col: Int,
+        statsCache: Map<StatsKey, BandStats>
     ): Pair<Double, List<String>> {
         val scores = mutableListOf<Double>()
         val filters = mutableListOf<String>()
@@ -116,21 +168,32 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         for (scene in scenes) {
             when (scene.source) {
                 SatelliteSource.SENTINEL_2 -> {
-                    val ndviRaster = scene.bands["NDVI"] ?: continue
-                    val ndvi = sampleNearest(ndviRaster, referenceRaster, row, col) ?: continue
-                    // NDVI [-1,1] -> düşük bitki örtüsü = yüksek anomali skoru ihtimali
-                    val score = (1.0 - ((ndvi + 1.0) / 2.0)).coerceIn(0.0, 1.0)
-                    scores.add(score)
-                    filters.add("NDVI (Sentinel-2)")
+                    scene.bands["NDVI"]?.let { ndviRaster ->
+                        val ndvi = sampleNearest(ndviRaster, referenceRaster, row, col)
+                        val stats = statsCache[StatsKey(scene.source, "NDVI")]
+                        if (ndvi != null && stats != null) {
+                            zScoreToAnomalyScore(ndvi.toDouble(), stats)?.let {
+                                scores.add(it)
+                                filters.add("NDVI (Sentinel-2)")
+                            }
+                        }
+                    }
+                    scene.bands["NDWI"]?.let { ndwiRaster ->
+                        val ndwi = sampleNearest(ndwiRaster, referenceRaster, row, col)
+                        val stats = statsCache[StatsKey(scene.source, "NDWI")]
+                        if (ndwi != null && stats != null) {
+                            zScoreToAnomalyScore(ndwi.toDouble(), stats)?.let {
+                                scores.add(it)
+                                filters.add("NDWI/Nem Anomalisi (Sentinel-2)")
+                            }
+                        }
+                    }
                 }
                 SatelliteSource.LANDSAT_TIRS -> {
                     val lstRaster = scene.bands["LST"] ?: continue
                     val lst = sampleNearest(lstRaster, referenceRaster, row, col) ?: continue
-                    val meanLst = lstRaster.values.average()
-                    val stdLst = kotlin.math.sqrt(lstRaster.values.map { (it - meanLst) * (it - meanLst) }.average())
-                    if (stdLst < 1e-6) continue
-                    val zScore = kotlin.math.abs((lst - meanLst) / stdLst)
-                    val score = (zScore / 3.0).coerceIn(0.0, 1.0) // 3-sigma'da skor 1.0'a yaklaşır
+                    val stats = statsCache[StatsKey(scene.source, "LST")] ?: continue
+                    val score = zScoreToAnomalyScore(lst.toDouble(), stats) ?: continue
                     scores.add(score)
                     filters.add("Termal Anomali (Landsat TIRS)")
                 }
@@ -144,7 +207,8 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
                     val nir = sampleNearest(nirRaster, referenceRaster, row, col) ?: continue
                     if (nir + red < 1e-6) continue // sıfıra bölme koruması
                     val ndvi = (nir - red) / (nir + red)
-                    val score = (1.0 - ((ndvi + 1.0) / 2.0)).coerceIn(0.0, 1.0)
+                    val stats = statsCache[StatsKey(scene.source, "NDVI")] ?: continue
+                    val score = zScoreToAnomalyScore(ndvi.toDouble(), stats) ?: continue
                     scores.add(score)
                     filters.add("NDVI (Planet)")
                 }
@@ -154,6 +218,23 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
 
         if (scores.isEmpty()) return 0.0 to emptyList()
         return scores.average() to filters
+    }
+
+    /**
+     * Ham değeri (NDVI veya LST), önceden hesaplanmış bölgesel istatistiklere göre
+     * YEREL SAPMA (z-score) skoruna çevirir - MUTLAK bir eşik DEĞİL.
+     *
+     * Bu fark kritiktir: çorak/kurak bir arazide (örn. step, yarı çöl) NDVI zaten her yerde
+     * düşüktür - mutlak eşik kullanılırsa neredeyse TÜM pikseller "anomali" görünür, bu da
+     * anlamsız/rastgele dağılmış sonuçlara yol açar. Z-score mantığı bunun yerine "bu piksel,
+     * çevresindeki bölgenin tipik değerinden ne kadar sapıyor" sorusuna cevap verir - gömülü
+     * bir yapının üstündeki toprak, çevresinden farklı bitki örtüsü/termal davranış gösterirse
+     * bu YEREL sapma olarak yakalanır, genel arazi kuruluğundan/sıcaklığından bağımsız olarak.
+     */
+    private fun zScoreToAnomalyScore(value: Double, stats: BandStats): Double? {
+        if (stats.std < 1e-6) return null // raster tamamen düz (varyans yok), anlamlı sapma hesaplanamaz
+        val zScore = kotlin.math.abs((value - stats.mean) / stats.std)
+        return (zScore / 3.0).coerceIn(0.0, 1.0) // 3-sigma'da skor 1.0'a yaklaşır
     }
 
     /** referenceRaster'daki (row,col) konumunu sourceRaster grid'inde en yakın hücreye haritalar. */

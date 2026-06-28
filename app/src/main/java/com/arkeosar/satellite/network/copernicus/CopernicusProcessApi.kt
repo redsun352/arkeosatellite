@@ -62,7 +62,18 @@ interface CopernicusProcessApi {
     ): Response<okhttp3.ResponseBody>
 }
 
-/** NDVI hesaplayan, GeoTIFF (float32, tek bant) döndüren standart evalscript. */
+/**
+ * NDVI ve NDWI'yi (NIR-SWIR/Gao versiyonu) BİRLİKTE, 2 bantlı tek bir GeoTIFF olarak
+ * hesaplayan evalscript.
+ *
+ * NDVI = (NIR-RED)/(NIR+RED) -> bitki örtüsü sağlığı/yoğunluğu
+ * NDWI (Gao 1996, NIR-SWIR) = (NIR-SWIR)/(NIR+SWIR) -> bitki/toprak nem içeriği
+ *
+ * NOT: Bu NDWI formülü "McFeeters" (Green-NIR, açık su gövdesi tespiti) DEĞİLDİR -
+ * burada kullanılan Gao versiyonu (NIR-SWIR) toprak/bitki nem stresini ölçer, ki
+ * arkeolojik crop-mark tespitinde aranan sinyal budur (gömülü yapı üstündeki toprağın
+ * farklı drenaj/nem tutma davranışı). Sentinel-2'de SWIR bandı B11'dir (1610nm).
+ */
 object Evalscripts {
     val ndvi = """
         //VERSION=3
@@ -75,6 +86,22 @@ object Evalscripts {
         function evaluatePixel(sample) {
           let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
           return [ndvi];
+        }
+    """.trimIndent()
+
+    /** NDVI (bant 0) ve NDWI/NIR-SWIR (bant 1) - chunky/interleaved 2 bant GeoTIFF. */
+    val ndviAndNdwi = """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B04", "B08", "B11"],
+            output: { bands: 2, sampleType: "FLOAT32" }
+          };
+        }
+        function evaluatePixel(sample) {
+          let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+          let ndwi = (sample.B08 - sample.B11) / (sample.B08 + sample.B11);
+          return [ndvi, ndwi];
         }
     """.trimIndent()
 }
