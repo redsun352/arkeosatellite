@@ -62,6 +62,12 @@ object SurferFilters {
         FilterType.HISTOGRAM_EQUALIZATION -> histogramEqualization(data)
         FilterType.LOCAL_CONTRAST -> localContrast(data, width, height, radius = 3)
         FilterType.ANOMALY_ENHANCEMENT -> anomalyEnhancement(data, width, height)
+        FilterType.ANALYTIC_SIGNAL -> analyticSignal(data, width, height, params.sigmaSmall)
+        FilterType.TILT_DERIVATIVE -> tiltDerivative(data, width, height, params.sigmaSmall)
+        FilterType.THETA_MAP -> thetaMap(data, width, height, params.sigmaSmall)
+        FilterType.TDX -> tdxHyperbolicTilt(data, width, height, params.sigmaSmall)
+        FilterType.TOTAL_HORIZONTAL_DERIVATIVE -> gradientMagnitude(data, width, height)
+        FilterType.RX_ANOMALY_DETECTOR -> rxAnomalyDetector(data, width, height, radius = 4)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -277,5 +283,140 @@ object SurferFilters {
         val std = sqrt(deviations.map { (it - mean) * (it - mean) }.average().toFloat())
         if (std < 1e-6f) return data.copyOf()
         return FloatArray(data.size) { i -> ((deviations[i] - mean) / std / 3f).coerceIn(-1f, 1f) * 0.5f + 0.5f }
+    }
+
+    // ---------- Gelişmiş jeofizik filtreler ----------
+    //
+    // Bu filtreler, manyetik/gravite potansiyel alan analizinde kullanılan standart
+    // kenar/kaynak belirleme tekniklerinin (Analytic Signal, Tilt Derivative, Theta Map,
+    // TDX) skaler (manyetik olmayan) bir grid'e uyarlanmış halidir. Kaynak: Keating &
+    // Sailhac 2004 (Analytic Signal), Fairhead 2008 / Oruc 2010 (Tilt Derivative).
+    //
+    // ÖNEMLİ UYARLAMA NOTU: Bu filtreler orijinal olarak 3 boyutlu potansiyel alan
+    // verisi (gerçek bir "düşey türev" bileşeni olan, ölçülen fiziksel bir alan) için
+    // tasarlanmıştır. Bizim verimiz (NDVI/NDWI/LST skoru) gerçek bir potansiyel alan
+    // DEĞİLDİR - düşey bir bileşeni yoktur. Bu yüzden "düşey türev" (vertical derivative,
+    // dB/dz), PSEUDO bir yaklaşımla simüle edilir: küçük ölçekli bir Gaussian blur'dan
+    // sonraki artık (residual) - bu, jeofizikteki "upward continuation farkı" tekniğiyle
+    // aynı mantığı taşır (bkz. Oliveira & Pham 2022, "upward continuation tabanlı sonlu
+    // fark formülü"). Bu YAKLAŞIK bir simülasyondur, gerçek 3D fiziksel türev değildir -
+    // ama pratikte kenar/kaynak belirleme amacına hizmet eder.
+
+    /** Pseudo-düşey türev: ince ölçekli Gaussian'dan kalan artık (residual). */
+    private fun pseudoVerticalDerivative(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        val smoothed = gaussianBlur(data, width, height, sigma)
+        return FloatArray(data.size) { i -> data[i] - smoothed[i] }
+    }
+
+    private fun sobelGradients(data: FloatArray, width: Int, height: Int): Pair<FloatArray, FloatArray> {
+        val gx = FloatArray(width * height)
+        val gy = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                fun at(dr: Int, dc: Int): Float {
+                    val r = clampIndex(row + dr, height)
+                    val c = clampIndex(col + dc, width)
+                    return data[r * width + c]
+                }
+                gx[row * width + col] = (at(-1, 1) + 2 * at(0, 1) + at(1, 1)) - (at(-1, -1) + 2 * at(0, -1) + at(1, -1))
+                gy[row * width + col] = (at(1, -1) + 2 * at(1, 0) + at(1, 1)) - (at(-1, -1) + 2 * at(-1, 0) + at(-1, 1))
+            }
+        }
+        return gx to gy
+    }
+
+    /**
+     * Analytic Signal (Total Gradient): AS = sqrt(Gx² + Gy² + Gz²). Kaynağın TAM
+     * üzerinde tepe noktası verir (Tilt Derivative'in aksine, manyetizasyon/sinyal
+     * yönünden bağımsızdır) - bu, polariteden bağımsız, simetrik bir "burada bir şey var"
+     * göstergesi olarak NDVI/termal anomaliler için de kullanışlıdır.
+     */
+    fun analyticSignal(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        val (gx, gy) = sobelGradients(data, width, height)
+        val gz = pseudoVerticalDerivative(data, width, height, sigma)
+        return FloatArray(data.size) { i -> sqrt(gx[i] * gx[i] + gy[i] * gy[i] + gz[i] * gz[i]) }
+    }
+
+    /**
+     * Tilt Derivative: TDR = atan2(Gz, sqrt(Gx²+Gy²)). [-π/2, π/2] aralığında değer
+     * üretir; kaynağın üzerinde pozitif, dışında negatiftir, sınırlar yaklaşık sıfır
+     * konturuyla işaretlenir. Düşey türevi yatay türeve normalize ettiği için ZAYIF/KÜÇÜK
+     * anomalileri GÜÇLÜ/BÜYÜK anomalilerle aynı görsel ağırlıkta gösterir - bu, küçük
+     * yapıların (kuyu, tek mezar) büyük yapılar (mahzen) kadar görünür olmasını sağlar.
+     */
+    fun tiltDerivative(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        val (gx, gy) = sobelGradients(data, width, height)
+        val gz = pseudoVerticalDerivative(data, width, height, sigma)
+        return FloatArray(data.size) { i ->
+            val horizontalMag = sqrt(gx[i] * gx[i] + gy[i] * gy[i])
+            kotlin.math.atan2(gz[i], horizontalMag.coerceAtLeast(1e-6f))
+        }
+    }
+
+    /**
+     * Theta Map: cos(theta) = THDR / AS. [0,1] aralığında değer üretir, kaynağın
+     * üzerinde minimum (theta=0 civarı -> cos=1 ama biz 1-cos ile tersine çeviriyoruz
+     * ki "yüksek skor = kaynak" tutarlılığı korunsun). Farklı genlikteki anomalileri
+     * dengelemek için tasarlanmıştır (Wijns ve ark. yöntemi).
+     */
+    fun thetaMap(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        val (gx, gy) = sobelGradients(data, width, height)
+        val gz = pseudoVerticalDerivative(data, width, height, sigma)
+        return FloatArray(data.size) { i ->
+            val thdr = sqrt(gx[i] * gx[i] + gy[i] * gy[i])
+            val asMag = sqrt(gx[i] * gx[i] + gy[i] * gy[i] + gz[i] * gz[i])
+            if (asMag < 1e-6f) 0f else 1f - (thdr / asMag).coerceIn(0f, 1f)
+        }
+    }
+
+    /**
+     * TDX (Hyperbolic Tilt Angle): TDX = atan(Gz / THDR) ama tan yerine normalize edilmiş
+     * bir oran kullanır - standart Tilt Derivative'den farkı, küçük/büyük anomalileri
+     * dengelerken daha az gürültü büyütmesidir (Cooper & Cowan 2006 paterni).
+     */
+    fun tdxHyperbolicTilt(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        val (gx, gy) = sobelGradients(data, width, height)
+        val gz = pseudoVerticalDerivative(data, width, height, sigma)
+        return FloatArray(data.size) { i ->
+            val thdr = sqrt(gx[i] * gx[i] + gy[i] * gy[i])
+            kotlin.math.atan2(thdr, kotlin.math.abs(gz[i]).coerceAtLeast(1e-6f))
+        }
+    }
+
+    /**
+     * RX (Reed-Xiaoli) Anomaly Detector - basitleştirilmiş tek-bant versiyonu.
+     *
+     * NOT: Gerçek RX detektörü çok-bantlı veride Mahalanobis mesafesi kullanır (her
+     * pikselin TÜM bantlardaki spektral imzasının, yerel arka plan kovaryans matrisine
+     * göre ne kadar "anormal" olduğunu ölçer - bkz. Reed & Yu 1990). Tek bir bant (skaler
+     * grid) üzerinde Mahalanobis mesafesi, basit bir z-score'a indirgenir - bu yüzden bu
+     * fonksiyon ANOMALY_ENHANCEMENT'a matematiksel olarak çok yakındır, ama burada yerel
+     * pencere istatistiği (global değil) kullanılarak RX'in "yerel arka plan" felsefesine
+     * daha sadık kalınır. Gerçek çok-bantlı RX (NDVI+NDWI birlikte) için ResultActivity'de
+     * ayrı bir entegrasyon gerekir - bu, V2 için not edilmiştir.
+     */
+    fun rxAnomalyDetector(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var sum = 0f
+                var sumSq = 0f
+                var count = 0
+                for (dr in -radius..radius) {
+                    for (dc in -radius..radius) {
+                        val r = clampIndex(row + dr, height)
+                        val c = clampIndex(col + dc, width)
+                        val v = data[r * width + c]
+                        sum += v; sumSq += v * v; count++
+                    }
+                }
+                val localMean = sum / count
+                val localVar = max(1e-6f, sumSq / count - localMean * localMean)
+                val localStd = sqrt(localVar)
+                val center = data[row * width + col]
+                out[row * width + col] = kotlin.math.abs(center - localMean) / localStd
+            }
+        }
+        return out
     }
 }

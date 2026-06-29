@@ -23,4 +23,12 @@ enum class FilterType(val label: String) {
     HISTOGRAM_EQUALIZATION("Histogram Equalization"),
     LOCAL_CONTRAST("Local Contrast"),
     ANOMALY_ENHANCEMENT("Anomaly Enhancement"),
+
+    // --- Gelişmiş jeofizik filtreler (potansiyel alan/manyetik analizden uyarlanmış) ---
+    ANALYTIC_SIGNAL("Analytic Signal"),
+    TILT_DERIVATIVE("Tilt Derivative"),
+    THETA_MAP("Theta Map"),
+    TDX("TDX (Hyperbolic Tilt)"),
+    TOTAL_HORIZONTAL_DERIVATIVE("Total Horizontal Derivative"),
+    RX_ANOMALY_DETECTOR("RX Anomaly Detector"),
 }
