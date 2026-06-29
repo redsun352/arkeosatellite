@@ -83,6 +83,8 @@ object SurferFilters {
         FilterType.LAYER_MEDIUM -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.MEDIUM)
         FilterType.LAYER_DEEP -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.DEEP)
         FilterType.STRUCTURE_OUTLINE -> structureOutline(data, width, height, params.sigmaGaussian)
+        FilterType.GLCM_CONTRAST -> glcmContrast(data, width, height, windowRadius = 3)
+        FilterType.GLCM_HOMOGENEITY -> glcmHomogeneity(data, width, height, windowRadius = 3)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -803,5 +805,105 @@ object SurferFilters {
             }
         }
         return result
+    }
+
+    // ---------- Doku analizi (GLCM) ----------
+
+    private const val GLCM_LEVELS = 8 // gri seviye sayısı - performans/hassasiyet dengesi
+
+    /**
+     * Veriyi GLCM_LEVELS ayrık seviyeye quantize eder - GLCM, sürekli değerler üzerinde
+     * değil, sınırlı sayıda "gri seviye" üzerinde çalışır (Haralick 1973'ün orijinal
+     * formülasyonu). Global min/max kullanılır (yerel pencere quantizasyonu, pencereler
+     * arası tutarsız ölçek farkı yaratabileceği için tercih edilmemiştir).
+     */
+    private fun quantizeForGlcm(data: FloatArray, levels: Int): IntArray {
+        val min = data.min()
+        val max = data.max()
+        val range = (max - min).coerceAtLeast(1e-9f)
+        return IntArray(data.size) { i -> (((data[i] - min) / range) * (levels - 1)).toInt().coerceIn(0, levels - 1) }
+    }
+
+    /**
+     * Her piksel için, çevresindeki penceredeki GLCM'den (θ=0°, yatay komşu çiftleri)
+     * Contrast değerini hesaplar: Contrast = Σ (i-j)² · P(i,j). Komşu piksel değerleri
+     * BÜYÜK FARK gösterdiğinde (dokulu/gürültülü/kenarlı bölge) yüksek değer üretir,
+     * homojen/düzgün bölgelerde sıfıra yakın değer üretir.
+     *
+     * Bilimsel referans: gömülü arkeolojik/yer altı anomalilerinin tespiti için GLCM doku
+     * analizinin gerçek bir akademik incelemede (havadan/uydudan yer altı anomali tespiti
+     * üzerine) kullanıldığı doğrulanmıştır - sinyal-gürültü oranını artırmak ve anomalinin
+     * konumunu netleştirmek için low-pass filtre ile birlikte uygulanmıştır.
+     *
+     * Performans notu: O(width·height·pencere_alanı·levels²) karmaşıklığı - 48x48 grid +
+     * radius=3 (7x7=49 pencere) + 8 seviye için ~7.2M işlem, mobil cihazda milisaniyeler
+     * sürer ama daha büyük grid'lerde/pencerelerde dikkatli olunmalıdır.
+     */
+    fun glcmContrast(data: FloatArray, width: Int, height: Int, windowRadius: Int): FloatArray =
+        computeGlcmFeature(data, width, height, windowRadius) { glcm, levels ->
+            var contrast = 0f
+            for (i in 0 until levels) {
+                for (j in 0 until levels) {
+                    val p = glcm[i * levels + j]
+                    if (p > 0f) contrast += ((i - j) * (i - j)).toFloat() * p
+                }
+            }
+            contrast
+        }
+
+    /**
+     * Her piksel için, çevresindeki penceredeki GLCM'den Homogeneity (Inverse Difference
+     * Moment) değerini hesaplar: Homogeneity = Σ P(i,j) / (1+(i-j)²). Komşu piksel
+     * değerleri BENZER olduğunda (düzgün/homojen doku) yüksek değer (max 1.0), farklı
+     * olduğunda (dokulu/kenarlı) düşük değer üretir - Contrast'ın tersi davranış.
+     */
+    fun glcmHomogeneity(data: FloatArray, width: Int, height: Int, windowRadius: Int): FloatArray =
+        computeGlcmFeature(data, width, height, windowRadius) { glcm, levels ->
+            var homogeneity = 0f
+            for (i in 0 until levels) {
+                for (j in 0 until levels) {
+                    val p = glcm[i * levels + j]
+                    if (p > 0f) homogeneity += p / (1f + ((i - j) * (i - j)).toFloat())
+                }
+            }
+            homogeneity
+        }
+
+    /** Her piksel için yerel GLCM'i hesaplayıp verilen özellik fonksiyonunu uygulayan paylaşılan iskelet. */
+    private fun computeGlcmFeature(
+        data: FloatArray,
+        width: Int,
+        height: Int,
+        windowRadius: Int,
+        featureFn: (glcm: FloatArray, levels: Int) -> Float
+    ): FloatArray {
+        val levels = GLCM_LEVELS
+        val quantized = quantizeForGlcm(data, levels)
+        val out = FloatArray(width * height)
+        val glcm = FloatArray(levels * levels)
+
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                glcm.fill(0f)
+                var pairCount = 0
+                for (dr in -windowRadius..windowRadius) {
+                    for (dc in -windowRadius..windowRadius) {
+                        val r = clampIndex(row + dr, height)
+                        val c = clampIndex(col + dc, width)
+                        // Komşu çift: (r,c) ve (r, c+1) - yatay (θ=0°) yönde bir piksel sağı.
+                        val c2 = clampIndex(c + 1, width)
+                        val iVal = quantized[r * width + c]
+                        val jVal = quantized[r * width + c2]
+                        glcm[iVal * levels + jVal] += 1f
+                        pairCount++
+                    }
+                }
+                if (pairCount > 0) {
+                    for (k in glcm.indices) glcm[k] /= pairCount
+                }
+                out[row * width + col] = featureFn(glcm, levels)
+            }
+        }
+        return out
     }
 }

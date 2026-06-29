@@ -41,4 +41,6 @@ enum class FilterType(val label: String) {
     LAYER_MEDIUM("Katman: Orta Derinlik"),
     LAYER_DEEP("Katman: Derin"),
     STRUCTURE_OUTLINE("Yapı Konturu (Kenar Çizgisi)"),
+    GLCM_CONTRAST("Doku Kontrastı (GLCM)"),
+    GLCM_HOMOGENEITY("Doku Homojenliği (GLCM)"),
 }
