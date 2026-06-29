@@ -120,7 +120,18 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         // Bu geçiş cells listesinden bağımsızdır - polygon dışı hücreler burada ATLANMAZ,
         // 0f (düz/sıfır yükseklik) olarak işaretlenir, çünkü OpenGL'de tutarlı bir üçgen mesh
         // inşa edebilmek için düzenli (her satır/sütun dolu) bir grid gerekir.
+        //
+        // PCA Veri Füzyonu filtresi (SurferFilters.pcaAnomalyFusion) için Sentinel-2'nin
+        // NDVI ve NDWI bantları (varsa) HAM olarak da bu downsample grid boyutunda saklanır.
+        val sentinelScene = scenes.firstOrNull { it.source == SatelliteSource.SENTINEL_2 }
+        val ndviRaster = sentinelScene?.bands?.get("NDVI")
+        val ndwiRaster = sentinelScene?.bands?.get("NDWI")
+        val hasNdviNdwi = ndviRaster != null && ndwiRaster != null
+
         val heightmapScores = FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE)
+        val rawNdviGrid = if (hasNdviNdwi) FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
+        val rawNdwiGrid = if (hasNdviNdwi) FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
+
         for (gridRow in 0 until HEIGHTMAP_GRID_SIZE) {
             for (gridCol in 0 until HEIGHTMAP_GRID_SIZE) {
                 val row = (gridRow.toDouble() / HEIGHTMAP_GRID_SIZE * referenceRaster.heightPx).toInt()
@@ -135,10 +146,24 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
 
                 val insidePolygon = PolyUtil.containsLocation(LatLng(lat, lng), polygonLatLngs, true)
                 val (score, _) = computeScoreAt(scenes, referenceRaster, row, col, statsCache)
-                heightmapScores[gridRow * HEIGHTMAP_GRID_SIZE + gridCol] = if (insidePolygon) score.toFloat() else 0f
+                val gridIndex = gridRow * HEIGHTMAP_GRID_SIZE + gridCol
+                heightmapScores[gridIndex] = if (insidePolygon) score.toFloat() else 0f
+
+                if (hasNdviNdwi) {
+                    val ndvi = sampleNearest(ndviRaster!!, referenceRaster, row, col) ?: 0f
+                    val ndwi = sampleNearest(ndwiRaster!!, referenceRaster, row, col) ?: 0f
+                    rawNdviGrid!![gridIndex] = ndvi
+                    rawNdwiGrid!![gridIndex] = ndwi
+                }
             }
         }
-        val heightmap = HeightmapGrid(width = HEIGHTMAP_GRID_SIZE, height = HEIGHTMAP_GRID_SIZE, scores = heightmapScores)
+        val heightmap = HeightmapGrid(
+            width = HEIGHTMAP_GRID_SIZE,
+            height = HEIGHTMAP_GRID_SIZE,
+            scores = heightmapScores,
+            rawNdvi = rawNdviGrid,
+            rawNdwi = rawNdwiGrid
+        )
 
         return cells to heightmap
     }

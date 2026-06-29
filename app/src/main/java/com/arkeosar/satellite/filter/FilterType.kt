@@ -32,4 +32,5 @@ enum class FilterType(val label: String) {
     TOTAL_HORIZONTAL_DERIVATIVE("Total Horizontal Derivative"),
     RX_ANOMALY_DETECTOR("RX Anomaly Detector"),
     MULTISCALE_BLOB("Multi-Scale Blob Detector (Otomatik Boyut)"),
+    PCA_FUSION("PCA Veri Füzyonu (NDVI+NDWI)"),
 }

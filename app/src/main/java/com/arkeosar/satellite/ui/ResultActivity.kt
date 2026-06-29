@@ -199,7 +199,23 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         val grid = originalGrid ?: return
         val metersPerPixel = computeMetersPerPixel()
         val params: FilterParams = currentProfile.toFilterParams(metersPerPixel, customSizeMeters)
-        val filteredScores = SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height, params)
+
+        // PCA Veri Füzyonu İKİ BANT (NDVI+NDWI) gerektirir - normal apply() akışından
+        // farklı bir çağrı yapısı kullanır. NDVI/NDWI mevcut değilse (örn. sadece USGS/
+        // Planet kullanılmışsa) sessizce ham skora geri döner (kullanıcıya bilgi vermek
+        // için status mesajı da gösterilir).
+        val filteredScores = if (currentFilter == FilterType.PCA_FUSION) {
+            val ndvi = grid.rawNdvi
+            val ndwi = grid.rawNdwi
+            if (ndvi != null && ndwi != null) {
+                SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
+            } else {
+                binding.summaryText.append("\n\n" + getString(R.string.error_pca_requires_sentinel))
+                grid.scores.copyOf()
+            }
+        } else {
+            SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height, params)
+        }
 
         // 3D yüzeyi güncelle - filtrelenmiş skorlar [0,1] aralığını aşabilir (örn. Laplacian,
         // High Pass negatif değerler üretebilir) - renderer'a vermeden önce normalize ediyoruz.

@@ -67,11 +67,18 @@ data class AnomalyCell(
  * farklı olarak burada her hücre sabit bir satır/sütun pozisyonuna sahiptir (polygon
  * dışı hücreler de 0.0 skorla dahil edilir), bu sayede bir üçgen mesh inşa edilebilir.
  * scores dizisi satır-major: scores[row * width + col].
+ *
+ * rawNdvi/rawNdwi: Sentinel-2'den NDVI ve NDWI ikisi de mevcutsa, bu HAM (filtrelenmemiş,
+ * normalize edilmemiş) bant değerleri de ayrı ayrı taşınır - PCA Veri Füzyonu filtresi
+ * (bkz. SurferFilters.pcaAnomalyFusion) gibi ÇOK BANTLI işlem yapan filtreler için
+ * gereklidir; tek bantlı filtreler (Gaussian, Median, vb.) sadece `scores`'u kullanır.
  */
 data class HeightmapGrid(
     val width: Int,
     val height: Int,
-    val scores: FloatArray // 0.0 - 1.0, boyut = width * height
+    val scores: FloatArray, // 0.0 - 1.0, boyut = width * height
+    val rawNdvi: FloatArray? = null,
+    val rawNdwi: FloatArray? = null
 )
 
 data class AnalysisResult(
