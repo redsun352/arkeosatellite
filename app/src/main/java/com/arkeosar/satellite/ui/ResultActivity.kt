@@ -210,7 +210,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             if (ndvi != null && ndwi != null) {
                 SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
             } else {
-                binding.summaryText.append("\n\n" + getString(R.string.error_pca_requires_sentinel))
+                binding.summaryText.append("\n\n" + getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))
                 grid.scores.copyOf()
             }
         } else {
