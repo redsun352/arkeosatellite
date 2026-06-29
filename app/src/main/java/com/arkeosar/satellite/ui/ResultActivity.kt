@@ -200,15 +200,21 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         val metersPerPixel = computeMetersPerPixel()
         val params: FilterParams = currentProfile.toFilterParams(metersPerPixel, customSizeMeters)
 
-        // PCA Veri Füzyonu İKİ BANT (NDVI+NDWI) gerektirir - normal apply() akışından
-        // farklı bir çağrı yapısı kullanır. NDVI/NDWI mevcut değilse (örn. sadece USGS/
-        // Planet kullanılmışsa) sessizce ham skora geri döner (kullanıcıya bilgi vermek
+        // Çok bantlı filtreler (PCA, RX) İKİ BANT (NDVI+NDWI) gerektirir - normal apply()
+        // akışından farklı bir çağrı yapısı kullanır. NDVI/NDWI mevcut değilse (örn. sadece
+        // USGS/Planet kullanılmışsa) sessizce ham skora geri döner (kullanıcıya bilgi vermek
         // için status mesajı da gösterilir).
-        val filteredScores = if (currentFilter == FilterType.PCA_FUSION) {
+        val multiBandFilters = setOf(FilterType.PCA_FUSION, FilterType.RX_MULTIBAND_GLOBAL, FilterType.RX_MULTIBAND_LOCAL)
+        val filteredScores = if (currentFilter in multiBandFilters) {
             val ndvi = grid.rawNdvi
             val ndwi = grid.rawNdwi
             if (ndvi != null && ndwi != null) {
-                SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
+                when (currentFilter) {
+                    FilterType.PCA_FUSION -> SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
+                    FilterType.RX_MULTIBAND_GLOBAL -> SurferFilters.rxMultiBandGlobal(ndvi, ndwi)
+                    FilterType.RX_MULTIBAND_LOCAL -> SurferFilters.rxMultiBandLocal(ndvi, ndwi, grid.width, grid.height, radius = 4)
+                    else -> grid.scores.copyOf() // ulaşılamaz dal, exhaustive when için
+                }
             } else {
                 binding.summaryText.append("\n\n" + getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))
                 grid.scores.copyOf()

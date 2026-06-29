@@ -33,4 +33,6 @@ enum class FilterType(val label: String) {
     RX_ANOMALY_DETECTOR("RX Anomaly Detector"),
     MULTISCALE_BLOB("Multi-Scale Blob Detector (Otomatik Boyut)"),
     PCA_FUSION("PCA Veri Füzyonu (NDVI+NDWI)"),
+    RX_MULTIBAND_GLOBAL("RX Detector - Çok Bantlı (Global)"),
+    RX_MULTIBAND_LOCAL("RX Detector - Çok Bantlı (Yerel Pencere)"),
 }
