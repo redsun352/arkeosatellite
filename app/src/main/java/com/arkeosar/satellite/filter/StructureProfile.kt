@@ -29,7 +29,7 @@ enum class StructureProfile(
         label = "Kuyu",
         typicalSizeMeters = 1.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.LAPLACIAN, FilterType.ANALYTIC_SIGNAL, FilterType.HIGH_PASS, FilterType.ANOMALY_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.MORPHOLOGICAL_OPENING, FilterType.LAPLACIAN, FilterType.ANALYTIC_SIGNAL, FilterType.HIGH_PASS, FilterType.ANOMALY_ENHANCEMENT)
     ),
     GRAVE(
         label = "Mezar",
@@ -47,7 +47,7 @@ enum class StructureProfile(
         label = "Oda",
         typicalSizeMeters = 4.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.MORPHOLOGICAL_GRADIENT, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     CRYPT(
         label = "Mahzen",

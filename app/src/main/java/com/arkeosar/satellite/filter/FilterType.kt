@@ -43,4 +43,7 @@ enum class FilterType(val label: String) {
     STRUCTURE_OUTLINE("Yapı Konturu (Kenar Çizgisi)"),
     GLCM_CONTRAST("Doku Kontrastı (GLCM)"),
     GLCM_HOMOGENEITY("Doku Homojenliği (GLCM)"),
+    MORPHOLOGICAL_OPENING("Morfolojik Açma (Gürültü Temizleme)"),
+    MORPHOLOGICAL_CLOSING("Morfolojik Kapama (Boşluk Doldurma)"),
+    MORPHOLOGICAL_GRADIENT("Morfolojik Gradyan (Kalın Kenar)"),
 }

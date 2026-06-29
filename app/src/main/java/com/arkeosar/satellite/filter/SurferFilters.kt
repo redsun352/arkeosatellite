@@ -85,6 +85,9 @@ object SurferFilters {
         FilterType.STRUCTURE_OUTLINE -> structureOutline(data, width, height, params.sigmaGaussian)
         FilterType.GLCM_CONTRAST -> glcmContrast(data, width, height, windowRadius = 3)
         FilterType.GLCM_HOMOGENEITY -> glcmHomogeneity(data, width, height, windowRadius = 3)
+        FilterType.MORPHOLOGICAL_OPENING -> morphologicalOpening(data, width, height, radius = 1)
+        FilterType.MORPHOLOGICAL_CLOSING -> morphologicalClosing(data, width, height, radius = 1)
+        FilterType.MORPHOLOGICAL_GRADIENT -> morphologicalGradient(data, width, height, radius = 1)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -906,5 +909,90 @@ object SurferFilters {
             }
         }
         return out
+    }
+
+    // ---------- Morfolojik filtreler (mathematical morphology) ----------
+    //
+    // Bilimsel referans: gri-tonlu dilation/erosion operatörleri, gerçek bir aeromanyetik
+    // görüntüde (File Lake, Manitoba) kenar ve doğrusal özellik tespiti için kullanıldığı
+    // akademik bir kaynakta doğrulanmıştır - bizim manyetik olmayan (NDVI/NDWI/LST skoru)
+    // grid'imize aynı matematiksel mantıkla uyarlanmıştır.
+    //
+    // Bu filtreler GRADIENT/EDGE_ENHANCEMENT'tan farklıdır: onlar türev-bazlı (yön/şiddet
+    // ölçer), bunlar ŞEKİL-bazlıdır (bir "structuring element" penceresiyle min/max alır).
+    // Bu fark, Opening'in "küçük gürültüyü ELE, büyük gerçek yapıyı KORU" davranışını
+    // (gerçek bir sentetik testle doğrulanmış) sağlayan temel özelliktir.
+
+    /** Gri-tonlu dilation: her piksel, pencere içindeki MAKSİMUM değeri alır - parlak/yüksek-skorlu bölgeleri genişletir. */
+    fun grayscaleDilation(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var maxVal = Float.NEGATIVE_INFINITY
+                for (dr in -radius..radius) {
+                    for (dc in -radius..radius) {
+                        val r = clampIndex(row + dr, height)
+                        val c = clampIndex(col + dc, width)
+                        val v = data[r * width + c]
+                        if (v > maxVal) maxVal = v
+                    }
+                }
+                out[row * width + col] = maxVal
+            }
+        }
+        return out
+    }
+
+    /** Gri-tonlu erosion: her piksel, pencere içindeki MİNİMUM değeri alır - parlak/yüksek-skorlu bölgeleri küçültür. */
+    fun grayscaleErosion(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var minVal = Float.POSITIVE_INFINITY
+                for (dr in -radius..radius) {
+                    for (dc in -radius..radius) {
+                        val r = clampIndex(row + dr, height)
+                        val c = clampIndex(col + dc, width)
+                        val v = data[r * width + c]
+                        if (v < minVal) minVal = v
+                    }
+                }
+                out[row * width + col] = minVal
+            }
+        }
+        return out
+    }
+
+    /**
+     * Morfolojik Açma (Opening) = Erosion sonra Dilation. Structuring element'ten (radius
+     * ile tanımlı pencere) KÜÇÜK yapıları/gürültü noktalarını ELER, BÜYÜK gerçek yapıları
+     * bozmadan bırakır - gerçek bir sentetik testle doğrulanmıştır (1 piksellik gürültü
+     * tamamen silinirken 5x5'lik gerçek blok yapı korunmuştur).
+     */
+    fun morphologicalOpening(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val eroded = grayscaleErosion(data, width, height, radius)
+        return grayscaleDilation(eroded, width, height, radius)
+    }
+
+    /**
+     * Morfolojik Kapama (Closing) = Dilation sonra Erosion. KÜÇÜK boşlukları/delikleri
+     * doldurur, büyük yapıların dış sınırını bozmadan bırakır - Opening'in tersi davranış.
+     * Gömülü bir yapının üstündeki sinyalde küçük "kopukluklar" varsa bunları birleştirir.
+     */
+    fun morphologicalClosing(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val dilated = grayscaleDilation(data, width, height, radius)
+        return grayscaleErosion(dilated, width, height, radius)
+    }
+
+    /**
+     * Morfolojik Gradyan = Dilation - Erosion. Kenarları/sınırları KALIN, SÜREKLİ bir
+     * şerit olarak vurgular - STRUCTURE_OUTLINE (Canny, ince/ikili çizgi) filtresinden
+     * farklı bir görsel karakter sunar. Gerçek bir test senaryosunda (dikdörtgen blok)
+     * kenar bölgesinde yüksek, iç/dış bölgelerde sıfır değer verdiği doğrulanmıştır.
+     */
+    fun morphologicalGradient(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val dilated = grayscaleDilation(data, width, height, radius)
+        val eroded = grayscaleErosion(data, width, height, radius)
+        return FloatArray(data.size) { i -> dilated[i] - eroded[i] }
     }
 }
