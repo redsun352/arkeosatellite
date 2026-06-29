@@ -899,7 +899,8 @@ object SurferFilters {
                     }
                 }
                 if (pairCount > 0) {
-                    for (k in glcm.indices) glcm[k] /= pairCount
+                    val divisor = pairCount.toFloat()
+                    for (k in glcm.indices) glcm[k] = glcm[k] / divisor
                 }
                 out[row * width + col] = featureFn(glcm, levels)
             }
