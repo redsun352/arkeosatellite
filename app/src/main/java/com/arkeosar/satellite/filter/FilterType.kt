@@ -6,6 +6,7 @@ package com.arkeosar.satellite.filter
  * FloatArray (width*height, satır-major) -> FloatArray (aynı boyut).
  */
 enum class FilterType(val label: String) {
+    DETAILED("Detaylı Görünüm (Varsayılan)"),
     NONE("Ham Veri (Filtresiz)"),
     GAUSSIAN("Gaussian Filter"),
     MEDIAN("Median Filter"),

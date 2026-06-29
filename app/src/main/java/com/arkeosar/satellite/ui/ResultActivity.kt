@@ -67,7 +67,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private var originalGrid: HeightmapGrid? = null
     private var bbox: BoundingBox? = null
-    private var currentFilter: FilterType = FilterType.NONE
+    private var currentFilter: FilterType = FilterType.DETAILED
     private var currentProfile: StructureProfile = StructureProfile.VOID
     private var customSizeMeters: Double? = null // kullanıcı elle boyut girerse profilin varsayılanını ezer
 
@@ -119,6 +119,8 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
+    private var structureSpinnerInitialized = false
+
     private fun setupStructureSpinner() {
         val labels = StructureProfile.values().map { "${it.label} (~${it.typicalSizeMeters}m)" }
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels)
@@ -130,11 +132,19 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
                 currentProfile = StructureProfile.values()[position]
                 binding.customSizeInput.setText(currentProfile.typicalSizeMeters.toString())
                 customSizeMeters = null // profil değişince elle girilen özel boyutu sıfırla
-                // Profil seçildiğinde, o profilin önerdiği İLK filtreyi otomatik seç -
-                // kullanıcı "Oda" seçtiğinde doğrudan Band Pass uygulanmış halini görsün.
-                val recommendedFilter = currentProfile.recommendedFilters.firstOrNull() ?: FilterType.NONE
-                val filterPosition = FilterType.values().indexOf(recommendedFilter)
-                if (filterPosition >= 0) binding.filterSpinner.setSelection(filterPosition)
+
+                // Android, bir Spinner'a adapter/listener atandığında OnItemSelectedListener'ı
+                // OTOMATİK olarak bir kere tetikler (position=0 ile) - bu, kullanıcının
+                // gerçek bir seçim yapması DEĞİLDİR. Bu otomatik ilk tetiklenmede filtreyi
+                // değiştirMEyiz, çünkü o zaman varsayılan DETAILED görünüm yerine ilk yapı
+                // profilinin filtresi uygulanırdı - kullanıcı ekranı ilk açtığında istediğimiz
+                // "Detaylı Görünüm" varsayılanı bozulurdu.
+                if (structureSpinnerInitialized) {
+                    val recommendedFilter = currentProfile.recommendedFilters.firstOrNull() ?: FilterType.NONE
+                    val filterPosition = FilterType.values().indexOf(recommendedFilter)
+                    if (filterPosition >= 0) binding.filterSpinner.setSelection(filterPosition)
+                }
+                structureSpinnerInitialized = true
                 applyFilterAndRefresh()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -316,11 +326,11 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         map.mapType = GoogleMap.MAP_TYPE_HYBRID
         googleMap = map
 
-        // Başlangıçta (filtre seçilmeden) orijinal grid'i normalize edip çiz - redrawMapOverlay
-        // zaten kendi içinde polygon sınırını da çiziyor (map.clear() + drawPolygonOnMap).
-        originalGrid?.let { grid ->
-            redrawMapOverlay(normalizeToUnitRange(grid.scores))
-        }
+        // Varsayılan filtre (DETAILED) burada uygulanır - ham/filtresiz veri DEĞİL.
+        // applyFilterAndRefresh, currentFilter'a göre (başlangıçta DETAILED) hem 3D yüzeyi
+        // hem harita overlay'ini günceller; redrawMapOverlay zaten kendi içinde polygon
+        // sınırını da çiziyor (map.clear() + drawPolygonOnMap).
+        applyFilterAndRefresh()
 
         val polygonLats = intent.getDoubleArrayExtra(EXTRA_POLYGON_LATS) ?: doubleArrayOf()
         val polygonLngs = intent.getDoubleArrayExtra(EXTRA_POLYGON_LNGS) ?: doubleArrayOf()
