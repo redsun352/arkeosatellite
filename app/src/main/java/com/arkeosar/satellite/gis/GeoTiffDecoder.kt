@@ -202,7 +202,18 @@ object GeoTiffDecoder {
         return decompressed
     }
 
-    fun decodeSingleBand(tiffBytes: ByteArray, bbox: BoundingBox, bandName: String): BandRaster {
+    /**
+     * Tek bantlı TIFF'i decode eder. Çok büyük dosyalarda (örn. USGS Landsat termal bant,
+     * ~91MB sıkıştırılmış, ~234MB ham FLOAT32 olarak) OutOfMemoryError'a yol açmaması için
+     * isteğe bağlı bir [maxDimension] parametresi vardır - çıktı grid'i bu boyutu (en/boy
+     * en büyük kenar) aşmayacak şekilde NEAREST-NEIGHBOR downsample edilir. Bu, decode
+     * SIRASINDA yapılır (önce tam çözünürlükte decode edip sonra küçültmek DEĞİL) - asıl
+     * bellek patlamasının kaynağı olan büyük FloatArray allocation'ı baştan önler.
+     *
+     * Gerçek bir cihazda (152MB heap limitine yakın) ölçülen OOM hatasıyla doğrulanmış bir
+     * gerekliliktir - bkz. proje notları.
+     */
+    fun decodeSingleBand(tiffBytes: ByteArray, bbox: BoundingBox, bandName: String, maxDimension: Int = 1024): BandRaster {
         val info = parseImageInfo(tiffBytes)
         require(info.samplesPerPixel == 1) {
             "Desteklenmeyen bant sayısı: ${info.samplesPerPixel}. decodeSingleBand sadece tek bant TIFF okur - " +
@@ -210,18 +221,35 @@ object GeoTiffDecoder {
         }
 
         val bytesPerSample = info.bitsPerSample / 8
-        val values = FloatArray(info.width * info.height)
+        val scaleFactor = computeDownsampleFactor(info.width, info.height, maxDimension)
+        val outputWidth = (info.width + scaleFactor - 1) / scaleFactor
+        val outputHeight = (info.height + scaleFactor - 1) / scaleFactor
+        val values = FloatArray(outputWidth * outputHeight)
 
         if (info.isTiled) {
-            decodeTiledSingleBand(tiffBytes, info, bytesPerSample, values)
+            decodeTiledSingleBand(tiffBytes, info, bytesPerSample, values, scaleFactor, outputWidth)
         } else {
-            decodeStripedSingleBand(tiffBytes, info, bytesPerSample, values)
+            decodeStripedSingleBand(tiffBytes, info, bytesPerSample, values, scaleFactor, outputWidth)
         }
 
-        return BandRaster(bbox = bbox, widthPx = info.width, heightPx = info.height, values = values, bandName = bandName)
+        return BandRaster(bbox = bbox, widthPx = outputWidth, heightPx = outputHeight, values = values, bandName = bandName)
     }
 
-    private fun decodeStripedSingleBand(tiffBytes: ByteArray, info: ImageInfo, bytesPerSample: Int, values: FloatArray) {
+    /** Görüntünün en büyük kenarı maxDimension'ı aşıyorsa, kaç pikselde bir örnekleme yapılacağını hesaplar. */
+    private fun computeDownsampleFactor(width: Int, height: Int, maxDimension: Int): Int {
+        val largestDimension = maxOf(width, height)
+        if (largestDimension <= maxDimension) return 1
+        return (largestDimension + maxDimension - 1) / maxDimension
+    }
+
+    private fun decodeStripedSingleBand(
+        tiffBytes: ByteArray,
+        info: ImageInfo,
+        bytesPerSample: Int,
+        values: FloatArray,
+        scaleFactor: Int,
+        outputWidth: Int
+    ) {
         val stripOffsets = info.stripOffsets ?: return
         val stripByteCounts = info.stripByteCounts ?: return
         var rowCursor = 0
@@ -245,10 +273,20 @@ object GeoTiffDecoder {
             )
 
             val stripBuffer = ByteBuffer.wrap(decompressedBytes).order(info.buffer.order())
-            val stripStartIndex = rowCursor * info.width
 
+            // Sequential okuma ZORUNLU (sıkıştırılmış/predictor uygulanmış veri rastgele
+            // erişime izin vermez) - ama sadece downsample noktasına denk gelen örnekler
+            // ÇIKTI array'ine yazılır, diğerleri okunup atılır. Bu, asıl bellek tasarrufunu
+            // (büyük FloatArray allocation'ını önleme) sağlayan kısımdır.
             for (i in 0 until samplesInStrip) {
-                values[stripStartIndex + i] = readSample(stripBuffer, info.bitsPerSample, info.sampleFormat)
+                val imgRow = rowCursor + i / info.width
+                val imgCol = i % info.width
+                val sample = readSample(stripBuffer, info.bitsPerSample, info.sampleFormat)
+                if (imgRow % scaleFactor == 0 && imgCol % scaleFactor == 0) {
+                    val outRow = imgRow / scaleFactor
+                    val outCol = imgCol / scaleFactor
+                    values[outRow * outputWidth + outCol] = sample
+                }
             }
             rowCursor += rowsInThisStrip
         }
@@ -269,7 +307,14 @@ object GeoTiffDecoder {
      * her tile kendi içinde bağımsız olarak encode edilmiştir. Bu, gerçek bir test
      * TIFF'iyle (32x32 tile, predictor=3) doğrulanmış bir davranıştır.
      */
-    private fun decodeTiledSingleBand(tiffBytes: ByteArray, info: ImageInfo, bytesPerSample: Int, values: FloatArray) {
+    private fun decodeTiledSingleBand(
+        tiffBytes: ByteArray,
+        info: ImageInfo,
+        bytesPerSample: Int,
+        values: FloatArray,
+        scaleFactor: Int,
+        outputWidth: Int
+    ) {
         val tileWidth = info.tileWidth ?: throw IllegalStateException("TIFF'te TileWidth tag'i yok")
         val tileLength = info.tileLength ?: throw IllegalStateException("TIFF'te TileLength tag'i yok")
         val tileOffsets = info.tileOffsets ?: throw IllegalStateException("TIFF'te TileOffsets tag'i yok")
@@ -303,16 +348,22 @@ object GeoTiffDecoder {
                 val validRows = minOf(tileLength, info.height - imgRowStart)
                 val validCols = minOf(tileWidth, info.width - imgColStart)
 
-                // Tile içindeki her satırı sırayla oku - geçerli sütunları görüntüye yaz,
-                // padding sütunlarını (validCols'tan sonrası) ATLA (buffer pozisyonunu
-                // ilerletmek için oku ama yazma).
+                // Tile içindeki her satırı sırayla oku (sıkıştırılmış/predictor uygulanmış
+                // veri rastgele erişime izin vermez, sequential okuma ZORUNLU) - sadece
+                // (a) padding olmayan VE (b) downsample noktasına denk gelen örnekler
+                // ÇIKTI array'ine yazılır. Bu, asıl bellek tasarrufunu sağlayan kısımdır -
+                // gerçek bir cihazda ölçülen OOM hatasını önlemek için eklenmiştir.
                 for (r in 0 until tileLength) {
                     for (c in 0 until tileWidth) {
                         val sample = readSample(tileBuffer, info.bitsPerSample, info.sampleFormat)
                         if (r < validRows && c < validCols) {
                             val imgRow = imgRowStart + r
                             val imgCol = imgColStart + c
-                            values[imgRow * info.width + imgCol] = sample
+                            if (imgRow % scaleFactor == 0 && imgCol % scaleFactor == 0) {
+                                val outRow = imgRow / scaleFactor
+                                val outCol = imgCol / scaleFactor
+                                values[outRow * outputWidth + outCol] = sample
+                            }
                         }
                     }
                 }
