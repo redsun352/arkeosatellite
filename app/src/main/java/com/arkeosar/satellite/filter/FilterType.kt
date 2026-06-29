@@ -35,4 +35,9 @@ enum class FilterType(val label: String) {
     PCA_FUSION("PCA Veri Füzyonu (NDVI+NDWI)"),
     RX_MULTIBAND_GLOBAL("RX Detector - Çok Bantlı (Global)"),
     RX_MULTIBAND_LOCAL("RX Detector - Çok Bantlı (Yerel Pencere)"),
+
+    // --- Jeolojik katman ayrıştırma (upward continuation tabanlı regional-residual separation) ---
+    LAYER_SHALLOW("Katman: Yüzeysel"),
+    LAYER_MEDIUM("Katman: Orta Derinlik"),
+    LAYER_DEEP("Katman: Derin"),
 }

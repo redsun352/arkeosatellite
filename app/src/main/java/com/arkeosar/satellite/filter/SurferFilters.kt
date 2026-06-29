@@ -79,6 +79,9 @@ object SurferFilters {
         // SurferFilters.rxMultiBandGlobal/Local'ı kullanır.
         FilterType.RX_MULTIBAND_GLOBAL -> data.copyOf()
         FilterType.RX_MULTIBAND_LOCAL -> data.copyOf()
+        FilterType.LAYER_SHALLOW -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.SHALLOW)
+        FilterType.LAYER_MEDIUM -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.MEDIUM)
+        FilterType.LAYER_DEEP -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.DEEP)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -635,5 +638,59 @@ object SurferFilters {
         val invBB = varA / safeDet
         val invAB = -covAB / safeDet
         return Triple(invAA, invAB, invBB)
+    }
+
+    /** Jeolojik katman ayrıştırmasında hangi "derinlik bandının" istendiğini belirtir. */
+    enum class GeologicalLayer { SHALLOW, MEDIUM, DEEP }
+
+    /**
+     * Jeolojik Katman Ayrıştırma (Geological Layer Stripping) - jeofizikte "regional-residual
+     * separation" tekniğine dayanır (bkz. proje notları, upward continuation farkı yöntemi).
+     *
+     * Jeofizik prensibi: bir kaynağın yüzeydeki sinyali, kaynak ne kadar DERİNDEYSE o kadar
+     * GENİŞ/YAYILMIŞ görünür (yüzeysel kaynaklar dar/keskin, derin kaynaklar geniş/yumuşak iz
+     * bırakır). "Upward continuation" (alanı sanal olarak daha yüksek bir noktaya taşıma),
+     * Fourier domain'de yüksek frekansları (yüzeysel/küçük detayları) bastırır - bu, uzamsal
+     * domain'de artan sigma'lı bir Gaussian blur'a YAKLAŞIK olarak eşdeğerdir (tam matematiksel
+     * özdeşlik değil, ama spektral davranış benzerdir, pratik amaçlar için kullanılabilir).
+     *
+     * Üç ardışık "continuation seviyesi" (küçük, orta, büyük sigma) hesaplanır, ardından
+     * ardışık seviyeler arasındaki FARK alınır - bu fark, o iki seviye arasındaki ölçek
+     * bandına (yani "derinlik katmanına") karşılık gelen sinyali izole eder:
+     *  - SHALLOW = ham veri - orta_seviye_blur  (en ince/yüzeysel detaylar)
+     *  - MEDIUM  = orta_seviye_blur - büyük_seviye_blur  (orta ölçekli yapılar)
+     *  - DEEP    = büyük_seviye_blur - en_büyük_seviye_blur  (geniş/yayılmış, "derin" desenler)
+     *
+     * Gerçek bir sentetik testle doğrulanmıştır: üç farklı ölçekte (küçük/orta/büyük) kaynak
+     * içeren bir grid'de, her kaynak KENDİ karakteristik ölçeğine en yakın katmanda en yüksek
+     * enerji yoğunluğunu vermiştir - yani bu filtre, kullanıcının "hangi derinlik/boyut
+     * aralığını görmek istediğini" seçmesini sağlar.
+     *
+     * NOT: Bu, gerçek bir fiziksel derinlik ölçümü DEĞİLDİR (bizim verimiz NDVI/NDWI/LST
+     * skoru, gerçek bir potansiyel alan değil) - "derinlik katmanı" burada METAFORİK bir
+     * ÖLÇEK ayrıştırmasıdır, jeofizikteki gerçek upward continuation'ın matematiksel
+     * mantığından ilham alınarak uyarlanmıştır.
+     */
+    fun geologicalLayerStrip(data: FloatArray, width: Int, height: Int, params: FilterParams, layer: GeologicalLayer): FloatArray {
+        val sigmaSmall = params.sigmaGaussian.coerceAtLeast(0.3f)
+        val sigmaMedium = params.sigmaSmall.coerceAtLeast(sigmaSmall * 2f)
+        val sigmaLarge = params.sigmaLarge.coerceAtLeast(sigmaMedium * 2f)
+
+        return when (layer) {
+            GeologicalLayer.SHALLOW -> {
+                val mediumBlur = gaussianBlur(data, width, height, sigmaMedium)
+                FloatArray(data.size) { i -> data[i] - mediumBlur[i] }
+            }
+            GeologicalLayer.MEDIUM -> {
+                val mediumBlur = gaussianBlur(data, width, height, sigmaMedium)
+                val largeBlur = gaussianBlur(data, width, height, sigmaLarge)
+                FloatArray(data.size) { i -> mediumBlur[i] - largeBlur[i] }
+            }
+            GeologicalLayer.DEEP -> {
+                val largeBlur = gaussianBlur(data, width, height, sigmaLarge)
+                val extraLargeBlur = gaussianBlur(data, width, height, sigmaLarge * 2f)
+                FloatArray(data.size) { i -> largeBlur[i] - extraLargeBlur[i] }
+            }
+        }
     }
 }

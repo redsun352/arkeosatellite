@@ -29,55 +29,55 @@ enum class StructureProfile(
         label = "Kuyu",
         typicalSizeMeters = 1.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.TILT_DERIVATIVE, FilterType.LAPLACIAN, FilterType.ANALYTIC_SIGNAL, FilterType.HIGH_PASS, FilterType.ANOMALY_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.LAPLACIAN, FilterType.ANALYTIC_SIGNAL, FilterType.HIGH_PASS, FilterType.ANOMALY_ENHANCEMENT)
     ),
     GRAVE(
         label = "Mezar",
         typicalSizeMeters = 2.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     SARCOPHAGUS(
         label = "Lahit",
         typicalSizeMeters = 2.2,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.GRADIENT)
+        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.GRADIENT)
     ),
     CHAMBER(
         label = "Oda",
         typicalSizeMeters = 4.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     CRYPT(
         label = "Mahzen",
         typicalSizeMeters = 6.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
     ),
     VOID(
         label = "Boşluk (Genel)",
         typicalSizeMeters = 3.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.RX_MULTIBAND_LOCAL, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
+        recommendedFilters = listOf(FilterType.RX_MULTIBAND_LOCAL, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
     ),
     ENTRANCE(
         label = "Giriş",
         typicalSizeMeters = 1.5,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.TDX, FilterType.GRADIENT, FilterType.HIGH_PASS, FilterType.EDGE_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TDX, FilterType.GRADIENT, FilterType.HIGH_PASS, FilterType.EDGE_ENHANCEMENT)
     ),
     TUNNEL(
         label = "Tünel",
         typicalSizeMeters = 1.8,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT)
     ),
     CORRIDOR(
         label = "Koridor",
         typicalSizeMeters = 2.0,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.LOCAL_CONTRAST)
     );
 
     /**
