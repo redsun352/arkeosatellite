@@ -57,6 +57,11 @@ object GeoTiffDecoder {
     private const val PLANAR_CONFIG_CHUNKY = 1   // örnekler piksel başına interleaved (RGBRGBRGB...)
     private const val PLANAR_CONFIG_SEPARATE = 2 // her bant ayrı bir düzlemde (RRR...GGG...BBB...)
 
+    private const val TAG_TILE_WIDTH = 322
+    private const val TAG_TILE_LENGTH = 323
+    private const val TAG_TILE_OFFSETS = 324
+    private const val TAG_TILE_BYTE_COUNTS = 325
+
     private data class IfdEntry(val tag: Int, val type: Int, val count: Int, val valueOrOffset: Int)
 
     /** IFD'den çıkarılan, decode için gereken tüm temel bilgiler. */
@@ -71,9 +76,15 @@ object GeoTiffDecoder {
         val samplesPerPixel: Int,
         val rowsPerStrip: Int,
         val planarConfig: Int,
-        val stripOffsets: IntArray,
-        val stripByteCounts: IntArray
-    )
+        val stripOffsets: IntArray?,
+        val stripByteCounts: IntArray?,
+        val tileWidth: Int?,
+        val tileLength: Int?,
+        val tileOffsets: IntArray?,
+        val tileByteCounts: IntArray?
+    ) {
+        val isTiled: Boolean get() = tileOffsets != null
+    }
 
     private fun parseImageInfo(tiffBytes: ByteArray): ImageInfo {
         val buffer = ByteBuffer.wrap(tiffBytes)
@@ -128,9 +139,17 @@ object GeoTiffDecoder {
         }
 
         val stripOffsetsEntry = entries.find(TAG_STRIP_OFFSETS)
-            ?: throw IllegalStateException("TIFF'te StripOffsets tag'i yok (tiled TIFF desteklenmiyor)")
         val stripByteCountsEntry = entries.find(TAG_STRIP_BYTE_COUNTS)
-            ?: throw IllegalStateException("TIFF'te StripByteCounts tag'i yok")
+        val tileOffsetsEntry = entries.find(TAG_TILE_OFFSETS)
+        val tileByteCountsEntry = entries.find(TAG_TILE_BYTE_COUNTS)
+
+        // TIFF spesifikasyonu: bir görüntü ya striped ya tiled'dır, ikisi birden DEĞİL.
+        // StripOffsets yoksa ama TileOffsets varsa, bu tiled bir TIFF'tir (örn. USGS Landsat
+        // termal bant dosyaları - büyük GeoTIFF'lerde verimli kısmi erişim için yaygın bir
+        // format, gerçek bir USGS API yanıtıyla doğrulanmıştır).
+        require(stripOffsetsEntry != null || tileOffsetsEntry != null) {
+            "TIFF'te ne StripOffsets ne de TileOffsets tag'i var - desteklenmeyen format"
+        }
 
         return ImageInfo(
             buffer = buffer,
@@ -143,8 +162,12 @@ object GeoTiffDecoder {
             samplesPerPixel = samplesPerPixel,
             rowsPerStrip = rowsPerStrip,
             planarConfig = planarConfig,
-            stripOffsets = readValueArray(buffer, stripOffsetsEntry),
-            stripByteCounts = readValueArray(buffer, stripByteCountsEntry)
+            stripOffsets = stripOffsetsEntry?.let { readValueArray(buffer, it) },
+            stripByteCounts = stripByteCountsEntry?.let { readValueArray(buffer, it) },
+            tileWidth = entries.find(TAG_TILE_WIDTH)?.valueOrOffset,
+            tileLength = entries.find(TAG_TILE_LENGTH)?.valueOrOffset,
+            tileOffsets = tileOffsetsEntry?.let { readValueArray(buffer, it) },
+            tileByteCounts = tileByteCountsEntry?.let { readValueArray(buffer, it) }
         )
     }
 
@@ -188,16 +211,29 @@ object GeoTiffDecoder {
 
         val bytesPerSample = info.bitsPerSample / 8
         val values = FloatArray(info.width * info.height)
+
+        if (info.isTiled) {
+            decodeTiledSingleBand(tiffBytes, info, bytesPerSample, values)
+        } else {
+            decodeStripedSingleBand(tiffBytes, info, bytesPerSample, values)
+        }
+
+        return BandRaster(bbox = bbox, widthPx = info.width, heightPx = info.height, values = values, bandName = bandName)
+    }
+
+    private fun decodeStripedSingleBand(tiffBytes: ByteArray, info: ImageInfo, bytesPerSample: Int, values: FloatArray) {
+        val stripOffsets = info.stripOffsets ?: return
+        val stripByteCounts = info.stripByteCounts ?: return
         var rowCursor = 0
 
-        for (stripIndex in info.stripOffsets.indices) {
+        for (stripIndex in stripOffsets.indices) {
             val rowsInThisStrip = minOf(info.rowsPerStrip, info.height - rowCursor)
             val samplesInStrip = rowsInThisStrip * info.width
 
             val decompressedBytes = decompressAndUnpredict(
                 tiffBytes = tiffBytes,
-                offset = info.stripOffsets[stripIndex],
-                byteCount = info.stripByteCounts[stripIndex],
+                offset = stripOffsets[stripIndex],
+                byteCount = stripByteCounts[stripIndex],
                 expectedSampleCount = samplesInStrip,
                 bytesPerSample = bytesPerSample,
                 pixelWidth = info.width,
@@ -216,8 +252,72 @@ object GeoTiffDecoder {
             }
             rowCursor += rowsInThisStrip
         }
+    }
 
-        return BandRaster(bbox = bbox, widthPx = info.width, heightPx = info.height, values = values, bandName = bandName)
+    /**
+     * Tiled TIFF okuma (örn. USGS Landsat termal bant dosyaları - büyük GeoTIFF'lerde
+     * verimli kısmi erişim için kullanılan standart format, gerçek bir USGS API
+     * yanıtıyla doğrulanmıştır).
+     *
+     * Tile'lar, görüntüyü sabit boyutlu (TileWidth x TileLength) karelere böler ve
+     * soldan-sağa, yukarıdan-aşağıya sıralı olarak saklar. ÖNEMLİ: görüntü boyutu
+     * tile boyutuna tam bölünmeyebilir - bu durumda kenar tile'ları PADDING içerir
+     * (gerçek görüntü sınırını aşan kısım anlamsız/dolgu veridir) ve bu kısım
+     * ATLANMALIDIR, aksi halde görüntünün kenarlarında bozulma/kayma oluşur.
+     *
+     * Predictor reversal TILE GENİŞLİĞİNDE uygulanır (görüntü genişliğinde DEĞİL) -
+     * her tile kendi içinde bağımsız olarak encode edilmiştir. Bu, gerçek bir test
+     * TIFF'iyle (32x32 tile, predictor=3) doğrulanmış bir davranıştır.
+     */
+    private fun decodeTiledSingleBand(tiffBytes: ByteArray, info: ImageInfo, bytesPerSample: Int, values: FloatArray) {
+        val tileWidth = info.tileWidth ?: throw IllegalStateException("TIFF'te TileWidth tag'i yok")
+        val tileLength = info.tileLength ?: throw IllegalStateException("TIFF'te TileLength tag'i yok")
+        val tileOffsets = info.tileOffsets ?: throw IllegalStateException("TIFF'te TileOffsets tag'i yok")
+        val tileByteCounts = info.tileByteCounts ?: throw IllegalStateException("TIFF'te TileByteCounts tag'i yok")
+
+        val tilesAcross = (info.width + tileWidth - 1) / tileWidth
+        val tilesDown = (info.height + tileLength - 1) / tileLength
+
+        for (tileRow in 0 until tilesDown) {
+            for (tileCol in 0 until tilesAcross) {
+                val tileIndex = tileRow * tilesAcross + tileCol
+                val tileSampleCount = tileWidth * tileLength
+
+                val decompressedBytes = decompressAndUnpredict(
+                    tiffBytes = tiffBytes,
+                    offset = tileOffsets[tileIndex],
+                    byteCount = tileByteCounts[tileIndex],
+                    expectedSampleCount = tileSampleCount,
+                    bytesPerSample = bytesPerSample,
+                    pixelWidth = tileWidth, // predictor TILE genişliğinde uygulanır, görüntü genişliğinde değil
+                    bandCount = 1,
+                    rowCount = tileLength,
+                    compression = info.compression,
+                    predictor = info.predictor,
+                    order = info.buffer.order()
+                )
+
+                val tileBuffer = ByteBuffer.wrap(decompressedBytes).order(info.buffer.order())
+                val imgRowStart = tileRow * tileLength
+                val imgColStart = tileCol * tileWidth
+                val validRows = minOf(tileLength, info.height - imgRowStart)
+                val validCols = minOf(tileWidth, info.width - imgColStart)
+
+                // Tile içindeki her satırı sırayla oku - geçerli sütunları görüntüye yaz,
+                // padding sütunlarını (validCols'tan sonrası) ATLA (buffer pozisyonunu
+                // ilerletmek için oku ama yazma).
+                for (r in 0 until tileLength) {
+                    for (c in 0 until tileWidth) {
+                        val sample = readSample(tileBuffer, info.bitsPerSample, info.sampleFormat)
+                        if (r < validRows && c < validCols) {
+                            val imgRow = imgRowStart + r
+                            val imgCol = imgColStart + c
+                            values[imgRow * info.width + imgCol] = sample
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -238,6 +338,14 @@ object GeoTiffDecoder {
         require(info.samplesPerPixel == bandNames.size) {
             "TIFF'te ${info.samplesPerPixel} bant var ama ${bandNames.size} isim verildi (bandNames boyutu uyuşmuyor)"
         }
+        // NOT: Çok-bantlı kaynaklarımız (Sentinel-2/Process API, Planet) şu ana kadar hep
+        // striped TIFF döndürdü - tiled çok-bantlı destek henüz implemente edilmedi. Eğer
+        // ileride bu kaynaklardan tiled bir yanıt gelirse, sessizce yanlış sonuç üretmek
+        // yerine burada AÇIK bir hata fırlatılır.
+        val stripOffsets = info.stripOffsets
+            ?: throw IllegalStateException("TIFF tiled formatta - decodeMultiBand şu an sadece striped TIFF okuyabiliyor")
+        val stripByteCounts = info.stripByteCounts
+            ?: throw IllegalStateException("TIFF'te StripByteCounts tag'i yok")
 
         val bytesPerSample = info.bitsPerSample / 8
         val bandCount = info.samplesPerPixel
@@ -247,7 +355,7 @@ object GeoTiffDecoder {
             // Her bant kendi strip grubuna sahip - stripOffsets dizisi bant bazında bölünür.
             // Separate düzende her strip TEK bir bandın verisini içerir, yani predictor reversal
             // çağrısında bandCount=1 geçilir (decodeSingleBand ile aynı mantık).
-            val stripsPerBand = info.stripOffsets.size / bandCount
+            val stripsPerBand = stripOffsets.size / bandCount
             for (band in 0 until bandCount) {
                 var rowCursor = 0
                 for (localStripIndex in 0 until stripsPerBand) {
@@ -257,8 +365,8 @@ object GeoTiffDecoder {
 
                     val decompressed = decompressAndUnpredict(
                         tiffBytes = tiffBytes,
-                        offset = info.stripOffsets[globalStripIndex],
-                        byteCount = info.stripByteCounts[globalStripIndex],
+                        offset = stripOffsets[globalStripIndex],
+                        byteCount = stripByteCounts[globalStripIndex],
                         expectedSampleCount = samplesInStrip,
                         bytesPerSample = bytesPerSample,
                         pixelWidth = info.width,
@@ -279,14 +387,14 @@ object GeoTiffDecoder {
         } else {
             // Chunky: her strip, piksel başına interleaved tüm bantları içerir.
             var rowCursor = 0
-            for (stripIndex in info.stripOffsets.indices) {
+            for (stripIndex in stripOffsets.indices) {
                 val rowsInThisStrip = minOf(info.rowsPerStrip, info.height - rowCursor)
                 val samplesInStrip = rowsInThisStrip * info.width * bandCount
 
                 val decompressed = decompressAndUnpredict(
                     tiffBytes = tiffBytes,
-                    offset = info.stripOffsets[stripIndex],
-                    byteCount = info.stripByteCounts[stripIndex],
+                    offset = stripOffsets[stripIndex],
+                    byteCount = stripByteCounts[stripIndex],
                     expectedSampleCount = samplesInStrip,
                     bytesPerSample = bytesPerSample,
                     pixelWidth = info.width,
