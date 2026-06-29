@@ -13,6 +13,7 @@
     <string name="btn_view_map">Harita</string>
     <string name="heightmap_drag_hint">Döndürmek için sürükleyin</string>
     <string name="filter_label">Filtre:</string>
+    <string name="opacity_label">Opaklık:</string>
     <string name="error_pca_requires_sentinel">PCA Veri Füzyonu için Sentinel-2 (NDVI+NDWI) gerekir - bu analizde mevcut değil.</string>
     <string name="structure_label">Yapı:</string>
     <string name="size_hint">m</string>

@@ -70,6 +70,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
     private var currentFilter: FilterType = FilterType.DETAILED
     private var currentProfile: StructureProfile = StructureProfile.VOID
     private var customSizeMeters: Double? = null // kullanıcı elle boyut girerse profilin varsayılanını ezer
+    private var currentOpacityPercent: Int = 85 // 0=tamamen şeffaf, 100=tamamen opak (SeekBar varsayılanıyla aynı)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +92,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         loadHeightmapAndBounds()
         setupStructureSpinner()
         setupFilterSpinner()
+        setupOpacitySeekBar()
 
         val mapFragment = supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment) as? SupportMapFragment
         mapFragment?.getMapAsync(this)
@@ -175,6 +177,33 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+    }
+
+    /**
+     * Sepya heatmap overlay'inin opaklığını kontrol eden slider. GoogleMap'in GroundOverlay
+     * API'si "transparency" (şeffaflık) parametresi alır - bu, opaklığın TERSİDİR
+     * (transparency=0 -> tam opak, transparency=1 -> tam şeffaf). Kullanıcı arayüzünde
+     * "Opaklık" göstermek daha sezgisel olduğu için, dönüşümü burada yapıyoruz:
+     * opacityPercent=100 (tam opak) -> transparency=0.0, opacityPercent=0 -> transparency=1.0.
+     *
+     * setTransparency() doğrudan mevcut GroundOverlay nesnesinde çağrılır - haritayı
+     * (polygon + bitmap) yeniden çizmeye gerek YOKTUR, bu yüzden slider sürüklenirken
+     * akıcı/anlık bir tepki sağlanır.
+     */
+    private fun setupOpacitySeekBar() {
+        binding.opacitySeekBar.progress = currentOpacityPercent
+        binding.opacityValueText.text = "$currentOpacityPercent%"
+
+        binding.opacitySeekBar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                currentOpacityPercent = progress
+                binding.opacityValueText.text = "$progress%"
+                val transparency = 1f - (progress / 100f)
+                currentGroundOverlay?.transparency = transparency
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
     }
 
     /**
@@ -274,7 +303,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             GroundOverlayOptions()
                 .image(BitmapDescriptorFactory.fromBitmap(bitmap))
                 .positionFromBounds(bounds)
-                .transparency(0.15f) // tamamen opak olmasın, altındaki uydu görüntüsü hafifçe görünsün
+                .transparency(1f - (currentOpacityPercent / 100f)) // kullanıcının opaklık slider'ından
         )
     }
 
