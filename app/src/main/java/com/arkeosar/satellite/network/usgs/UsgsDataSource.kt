@@ -102,12 +102,22 @@ class UsgsDataSource : SatelliteDataSource {
         if (optionsResponse.errorCode != null) {
             throw IllegalStateException("USGS download-options hatası: ${optionsResponse.errorCode}")
         }
-        val thermalOption = optionsResponse.data.orEmpty().firstOrNull {
-            it.available && it.productName.contains("Surface Temperature", ignoreCase = true)
-        } ?: throw IllegalStateException("USGS: bu sahnede yüzey sıcaklığı ürünü bulunamadı/aktif değil")
+        // ÖNEMLİ (gerçek API yanıtıyla doğrulanmış davranış - bkz. proje notları): USGS,
+        // download-options yanıtında ürünleri "productName" alanına göre AYIRT ETMEZ - tüm
+        // üst-seviye ürünler ve onların secondaryDownloads'ları "Landsat Collection 2 Level-2
+        // Band File" gibi GENEL bir productName taşır. Termal bant (ST_B10 = Surface Temperature
+        // Band 10) bilgisi sadece "displayId" alanındaki DOSYA ADI sonekinde (_ST_B10.TIF)
+        // bulunur, ve bu dosya üst-seviye sonuçların İÇİNDE değil, "secondaryDownloads"
+        // listesinin İÇİNDE yer alır. Bu yüzden arama hem üst seviyede hem secondaryDownloads
+        // içinde, productName değil displayId'ye göre yapılmalıdır.
+        val allOptions = optionsResponse.data.orEmpty()
+        val thermalOption = allOptions
+            .flatMap { listOf(it) + it.secondaryDownloads.orEmpty() }
+            .firstOrNull { it.available && it.displayId?.endsWith("_ST_B10.TIF", ignoreCase = true) == true }
+            ?: throw IllegalStateException("USGS: bu sahnede yüzey sıcaklığı (ST_B10) bandı bulunamadı/aktif değil")
 
         val requestResponse = callWithDetailedError("download-request") {
-            api.downloadRequest(authToken, DownloadRequestBody(downloads = listOf(DownloadEntry(entityId = bestScene.entityId, productId = thermalOption.id))))
+            api.downloadRequest(authToken, DownloadRequestBody(downloads = listOf(DownloadEntry(entityId = thermalOption.entityId, productId = thermalOption.id))))
         }
         if (requestResponse.errorCode != null) {
             throw IllegalStateException("USGS download-request hatası: ${requestResponse.errorCode}")

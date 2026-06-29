@@ -66,8 +66,10 @@ data class DownloadOptionsRequest(val datasetName: String, val entityIds: List<S
 data class DownloadOption(
     val entityId: String,
     val id: String, // downloadId - download-request'te kullanılır
+    val displayId: String?,
     val productName: String,
-    val available: Boolean
+    val available: Boolean,
+    val secondaryDownloads: List<DownloadOption>? = null
 )
 
 data class DownloadRequestBody(val downloads: List<DownloadEntry>)
