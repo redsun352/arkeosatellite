@@ -40,4 +40,5 @@ enum class FilterType(val label: String) {
     LAYER_SHALLOW("Katman: Yüzeysel"),
     LAYER_MEDIUM("Katman: Orta Derinlik"),
     LAYER_DEEP("Katman: Derin"),
+    STRUCTURE_OUTLINE("Yapı Konturu (Kenar Çizgisi)"),
 }

@@ -82,6 +82,7 @@ object SurferFilters {
         FilterType.LAYER_SHALLOW -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.SHALLOW)
         FilterType.LAYER_MEDIUM -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.MEDIUM)
         FilterType.LAYER_DEEP -> geologicalLayerStrip(data, width, height, params, GeologicalLayer.DEEP)
+        FilterType.STRUCTURE_OUTLINE -> structureOutline(data, width, height, params.sigmaGaussian)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -692,5 +693,115 @@ object SurferFilters {
                 FloatArray(data.size) { i -> largeBlur[i] - extraLargeBlur[i] }
             }
         }
+    }
+
+    /**
+     * Yapı Konturu (Canny Edge Detection) - dikdörtgen/kare gibi düzgün kenarlı yapıların
+     * (oda, mezar, lahit) SINIRINI net, ince, bağlantılı bir çizgi olarak çıkarır.
+     *
+     * Mevcut Gradient/Edge Enhancement filtrelerinden FARKI: onlar SÜREKLİ bir kenar
+     * şiddeti döndürür (her piksel 0-1 arası bir "ne kadar kenara yakın" değeri taşır).
+     * Bu filtre ise İKİLİ (binary) bir sonuç verir - her piksel KESİN olarak "kenar" (1)
+     * veya "kenar değil" (0) olarak sınıflandırılır, tam senin istediğin "net sınır
+     * çizgisi" çıktısı.
+     *
+     * Algoritma (Canny 1986, dört standart adım - bkz. proje notları):
+     *  1. Gaussian smoothing (gürültü temizleme)
+     *  2. Sobel gradyan (büyüklük + yön)
+     *  3. Non-Maximum Suppression (kenarı gradyan yönünde inceltme - tek piksel genişlik)
+     *  4. Histerezis eşikleme (güçlü/zayıf kenar sınıflandırması + bağlantılı zayıf
+     *     kenarları güçlü kenarlara bağlayarak kurtarma)
+     *
+     * Eşik değerleri SABİT değil, NMS sonrası kenar şiddetlerinin PERSENTİLİNE göre
+     * OTOMATİK hesaplanır - kullanıcının her veri seti için elle eşik girmesine gerek
+     * kalmaz (bkz. adım 4 dokümantasyonu, persentil tercihinin sebebi).
+     *
+     * Gerçek bir sentetik testle (dikdörtgen blok) doğrulanmıştır: NMS adımı, kenarın
+     * İÇİNDE ve DIŞINDA gradyan şiddetini sıfıra düşürürken, kenarın TAM ÜZERİNDE
+     * değeri korumuştur.
+     */
+    fun structureOutline(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        // 1) Gaussian smoothing
+        val smoothed = gaussianBlur(data, width, height, sigma.coerceAtLeast(0.5f))
+
+        // 2) Sobel gradyan (büyüklük + yön)
+        val (gx, gy) = sobelGradients(smoothed, width, height)
+        val magnitude = FloatArray(width * height) { i -> sqrt(gx[i] * gx[i] + gy[i] * gy[i]) }
+        val direction = FloatArray(width * height) { i -> kotlin.math.atan2(gy[i], gx[i]) }
+
+        // 3) Non-Maximum Suppression
+        val nms = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val idx = row * width + col
+                if (row == 0 || row == height - 1 || col == 0 || col == width - 1) continue // kenar pikselleri atlanır
+
+                var degrees = Math.toDegrees(direction[idx].toDouble()).toFloat() % 180f
+                if (degrees < 0) degrees += 180f
+
+                fun magAt(dr: Int, dc: Int): Float = magnitude[(row + dr) * width + (col + dc)]
+
+                val (n1, n2) = when {
+                    degrees < 22.5f || degrees >= 157.5f -> magAt(0, -1) to magAt(0, 1)
+                    degrees < 67.5f -> magAt(-1, 1) to magAt(1, -1)
+                    degrees < 112.5f -> magAt(-1, 0) to magAt(1, 0)
+                    else -> magAt(-1, -1) to magAt(1, 1)
+                }
+
+                if (magnitude[idx] >= n1 && magnitude[idx] >= n2) {
+                    nms[idx] = magnitude[idx]
+                }
+            }
+        }
+
+        // 4) Otomatik eşik hesaplama: PERSENTİL tabanlı (Otsu/std-bazlı eşikten farklı olarak,
+        // dağılımın şekline (dar/iki-değerli ya da geniş/sürekli) bakılmaksızın HER ZAMAN
+        // makul sayıda piksel seçer - bu, basit/ikili test verilerinde mean+std formülünün
+        // bazen maksimum değerin ÜZERİNDE bir eşik üretmesi sorununu çözer (gerçek bir
+        // sentetik test sırasında keşfedilen bug - bkz. proje notları).
+        val nonZero = nms.filter { it > 1e-6f }.sorted()
+        if (nonZero.isEmpty()) return FloatArray(width * height) // hiç kenar yok, boş sonuç
+
+        fun percentile(sorted: List<Float>, p: Float): Float {
+            val index = (p / 100f * (sorted.size - 1)).toInt().coerceIn(0, sorted.size - 1)
+            return sorted[index]
+        }
+
+        // KRİTİK DÜZELTME: floating-point yuvarlama hatasına karşı küçük bir epsilon
+        // çıkarılır. Persentil hesabına dahil olan bir değer, kendi eşiğine MATEMATİKSEL
+        // olarak eşit olabilir, ama ondalık yuvarlama farkından dolayı `>=` karşılaştırması
+        // yanlışlıkla false dönebilir - gerçek bir test senaryosunda (dikdörtgenin sol/sağ
+        // kenarları) bu bug'ın TÜM bir kenarı sessizce kaybettirdiği doğrulanmıştır.
+        val epsilon = 1e-4f
+        val highThreshold = percentile(nonZero, 70f) - epsilon
+        val lowThreshold = percentile(nonZero, 40f) - epsilon
+
+        // Histerezis: güçlü kenarlar doğrudan kabul, zayıf kenarlar bir güçlü komşuya bağlıysa kabul.
+        val isStrong = BooleanArray(width * height) { nms[it] >= highThreshold }
+        val isWeak = BooleanArray(width * height) { nms[it] >= lowThreshold && nms[it] < highThreshold }
+        val result = FloatArray(width * height)
+
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val idx = row * width + col
+                if (isStrong[idx]) {
+                    result[idx] = 1f
+                } else if (isWeak[idx]) {
+                    var connectedToStrong = false
+                    for (dr in -1..1) {
+                        for (dc in -1..1) {
+                            if (dr == 0 && dc == 0) continue
+                            val r = row + dr
+                            val c = col + dc
+                            if (r in 0 until height && c in 0 until width && isStrong[r * width + c]) {
+                                connectedToStrong = true
+                            }
+                        }
+                    }
+                    if (connectedToStrong) result[idx] = 1f
+                }
+            }
+        }
+        return result
     }
 }

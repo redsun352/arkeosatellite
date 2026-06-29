@@ -35,25 +35,25 @@ enum class StructureProfile(
         label = "Mezar",
         typicalSizeMeters = 2.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     SARCOPHAGUS(
         label = "Lahit",
         typicalSizeMeters = 2.2,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.GRADIENT)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.GRADIENT)
     ),
     CHAMBER(
         label = "Oda",
         typicalSizeMeters = 4.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     CRYPT(
         label = "Mahzen",
         typicalSizeMeters = 6.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
     ),
     VOID(
         label = "Boşluk (Genel)",
