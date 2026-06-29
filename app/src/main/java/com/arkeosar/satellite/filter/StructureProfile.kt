@@ -59,7 +59,7 @@ enum class StructureProfile(
         label = "Boşluk (Genel)",
         typicalSizeMeters = 3.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.ANOMALY_ENHANCEMENT, FilterType.RX_ANOMALY_DETECTOR, FilterType.BAND_PASS, FilterType.ADAPTIVE)
+        recommendedFilters = listOf(FilterType.MULTISCALE_BLOB, FilterType.ANOMALY_ENHANCEMENT, FilterType.RX_ANOMALY_DETECTOR, FilterType.BAND_PASS, FilterType.ADAPTIVE)
     ),
     ENTRANCE(
         label = "Giriş",

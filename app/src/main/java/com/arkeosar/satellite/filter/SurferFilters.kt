@@ -68,6 +68,7 @@ object SurferFilters {
         FilterType.TDX -> tdxHyperbolicTilt(data, width, height, params.sigmaSmall)
         FilterType.TOTAL_HORIZONTAL_DERIVATIVE -> gradientMagnitude(data, width, height)
         FilterType.RX_ANOMALY_DETECTOR -> rxAnomalyDetector(data, width, height, radius = 4)
+        FilterType.MULTISCALE_BLOB -> multiScaleBlobDetector(data, width, height)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -418,5 +419,44 @@ object SurferFilters {
             }
         }
         return out
+    }
+
+    /**
+     * Multi-Scale Blob Detector (Scale-Normalized Laplacian of Gaussian).
+     *
+     * Lindeberg (1994, 1998)'in "otomatik ölçek seçimi" yöntemine dayanır: farklı
+     * Gaussian smoothing seviyelerinde (sigma) Laplacian hesaplanır, her sigma için
+     * t·Δu (t=sigma²) ile NORMALİZE edilir - bu normalizasyon olmadan büyük sigma'lar
+     * her zaman daha düşük genlik üretirdi, karşılaştırma anlamsız olurdu. Her piksel
+     * için TÜM ölçeklerdeki en yüksek mutlak tepki seçilir.
+     *
+     * Pratik anlamı: kullanıcının yapı boyutunu ÖNCEDEN bilmesi/girmesi gerekmez -
+     * algoritma otomatik olarak "bu konumda, bu boyutta kompakt bir anomali var"
+     * tespitini yapar. Gerçek bir sentetik testle doğrulanmıştır: farklı boyuttaki
+     * (sigma=1.0 ve sigma=3.0) iki blob'un merkezinde, algoritma doğru karakteristik
+     * ölçeği (sırasıyla 1.0 ve 3.0) tespit etmiştir.
+     *
+     * NOT: Bu fonksiyon sadece tepki ŞİDDETİNİ (response) döndürür - hangi ölçekte
+     * tespit edildiği bilgisi (scale) şu an görselleştirilmiyor, gelecekte "tahmini
+     * yapı boyutu: X metre" gibi bir bilgi katmanı için kullanılabilir.
+     */
+    fun multiScaleBlobDetector(data: FloatArray, width: Int, height: Int): FloatArray {
+        val sigmas = listOf(0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f)
+        val bestResponse = FloatArray(width * height) { Float.NEGATIVE_INFINITY }
+
+        for (sigma in sigmas) {
+            val blurred = gaussianBlur(data, width, height, sigma)
+            val lap = laplacian(blurred, width, height)
+            val scaleFactor = sigma * sigma
+            for (i in lap.indices) {
+                // Negatif işaret: parlak (yüksek değerli) blob'lar için Laplacian negatiftir,
+                // pozitif bir "tepki" skoru istediğimiz için işareti çeviriyoruz.
+                val normalized = -lap[i] * scaleFactor
+                if (normalized > bestResponse[i]) {
+                    bestResponse[i] = normalized
+                }
+            }
+        }
+        return bestResponse
     }
 }

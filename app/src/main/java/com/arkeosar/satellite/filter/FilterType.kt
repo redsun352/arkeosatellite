@@ -31,4 +31,5 @@ enum class FilterType(val label: String) {
     TDX("TDX (Hyperbolic Tilt)"),
     TOTAL_HORIZONTAL_DERIVATIVE("Total Horizontal Derivative"),
     RX_ANOMALY_DETECTOR("RX Anomaly Detector"),
+    MULTISCALE_BLOB("Multi-Scale Blob Detector (Otomatik Boyut)"),
 }
