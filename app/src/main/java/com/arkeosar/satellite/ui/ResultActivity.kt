@@ -72,22 +72,20 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
     private var customSizeMeters: Double? = null // kullanıcı elle boyut girerse profilin varsayılanını ezer
     private var currentOpacityPercent: Int = 85 // 0=tamamen şeffaf, 100=tamamen opak (SeekBar varsayılanıyla aynı)
 
+    private var cellCount = 0
+    private var sourcesText = "-"
+    private var failedSourcesText = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityResultBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val cellCount = intent.getIntExtra(EXTRA_CELL_COUNT, 0)
-        val sourcesText = intent.getStringExtra(EXTRA_SOURCES) ?: "-"
-        val failedSourcesText = intent.getStringExtra(EXTRA_FAILED_SOURCES) ?: ""
+        cellCount = intent.getIntExtra(EXTRA_CELL_COUNT, 0)
+        sourcesText = intent.getStringExtra(EXTRA_SOURCES) ?: "-"
+        failedSourcesText = intent.getStringExtra(EXTRA_FAILED_SOURCES) ?: ""
 
-        binding.summaryText.text = buildString {
-            append("Polygon içinde analiz edilen hücre sayısı: $cellCount\n")
-            append("Kullanılan uydu kaynakları: $sourcesText")
-            if (failedSourcesText.isNotBlank()) {
-                append("\n\nBaşarısız olan kaynaklar:\n$failedSourcesText")
-            }
-        }
+        renderSummaryText(filterWarning = null)
 
         loadHeightmapAndBounds()
         setupStructureSpinner()
@@ -223,6 +221,30 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         return (metersPerPixelX + metersPerPixelY) / 2.0
     }
 
+    /**
+     * Sonuç özetini (hücre sayısı, kaynaklar, başarısız kaynaklar) ve isteğe bağlı bir
+     * FİLTREYE ÖZGÜ uyarı mesajını render eder. Bu fonksiyon HER ÇAĞRILDIĞINDA metni
+     * SIFIRDAN oluşturur (önceki metne EKLEME yapmaz) - bu, kullanıcı filtreler arasında
+     * geçiş yaptığında eski/alakasız uyarı mesajlarının (örn. "PCA için NDVI gerekir")
+     * ekranda BİRİKİP kalmasını önler. Önceki bir bug'da, binding.summaryText.append()
+     * her filtre denemesinde yeni bir satır eklediği için, kullanıcı önce PCA deneyip
+     * sonra başka bir filtreye geçtiğinde PCA'nın hata mesajı ekranda KALICI olarak
+     * görünmeye devam ediyordu - bu fonksiyon bu sorunu kökten çözer.
+     */
+    private fun renderSummaryText(filterWarning: String?) {
+        binding.summaryText.text = buildString {
+            append("Polygon içinde analiz edilen hücre sayısı: $cellCount\n")
+            append("Kullanılan uydu kaynakları: $sourcesText")
+            if (failedSourcesText.isNotBlank()) {
+                append("\n\nBaşarısız olan kaynaklar:\n$failedSourcesText")
+            }
+            if (!filterWarning.isNullOrBlank()) {
+                append("\n\n")
+                append(filterWarning)
+            }
+        }
+    }
+
     /** Seçilen filtreyi (yapı profiline göre kalibre edilmiş parametrelerle) orijinal grid'e uygular. */
     private fun applyFilterAndRefresh() {
         val grid = originalGrid ?: return
@@ -232,12 +254,14 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         // Çok bantlı filtreler (PCA, RX) İKİ BANT (NDVI+NDWI) gerektirir - normal apply()
         // akışından farklı bir çağrı yapısı kullanır. NDVI/NDWI mevcut değilse (örn. sadece
         // USGS/Planet kullanılmışsa) sessizce ham skora geri döner (kullanıcıya bilgi vermek
-        // için status mesajı da gösterilir).
+        // için status mesajı da gösterilir, ama HER ZAMAN renderSummaryText ile SIFIRDAN
+        // yazılır - bir önceki filtre denemesinden kalma mesaj asla birikmez).
         val multiBandFilters = setOf(FilterType.PCA_FUSION, FilterType.RX_MULTIBAND_GLOBAL, FilterType.RX_MULTIBAND_LOCAL)
         val filteredScores = if (currentFilter in multiBandFilters) {
             val ndvi = grid.rawNdvi
             val ndwi = grid.rawNdwi
             if (ndvi != null && ndwi != null) {
+                renderSummaryText(filterWarning = null)
                 when (currentFilter) {
                     FilterType.PCA_FUSION -> SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
                     FilterType.RX_MULTIBAND_GLOBAL -> SurferFilters.rxMultiBandGlobal(ndvi, ndwi)
@@ -245,10 +269,11 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
                     else -> grid.scores.copyOf() // ulaşılamaz dal, exhaustive when için
                 }
             } else {
-                binding.summaryText.append("\n\n" + getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))
+                renderSummaryText(filterWarning = getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))
                 grid.scores.copyOf()
             }
         } else {
+            renderSummaryText(filterWarning = null)
             SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height, params)
         }
 
