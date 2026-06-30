@@ -50,4 +50,5 @@ enum class FilterType(val label: String) {
     STANDARD_DEVIATION("Standart Sapma (Yerel Değişkenlik)"),
     COMPASS_GRADIENT("Pusula Gradyanı (8 Yön)"),
     CONSENSUS_SCORE("Konsensüs Skoru (Çoklu Filtre Oylaması)"),
+    WAVELET_DETAIL("Wavelet Detay Katsayısı (Haar)"),
 }

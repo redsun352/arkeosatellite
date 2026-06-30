@@ -92,6 +92,7 @@ object SurferFilters {
         FilterType.STANDARD_DEVIATION -> standardDeviationFilter(data, width, height, radius = 2)
         FilterType.COMPASS_GRADIENT -> compassGradient(data, width, height)
         FilterType.CONSENSUS_SCORE -> consensusScore(data, width, height, params)
+        FilterType.WAVELET_DETAIL -> waveletDetail(data, width, height)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -1200,5 +1201,84 @@ object SurferFilters {
         val range = max - min
         if (range < 1e-6f) return FloatArray(data.size) { 0.5f }
         return FloatArray(data.size) { i -> (data[i] - min) / range }
+    }
+
+    // ---------- Wavelet (Haar Dönüşümü) ----------
+    //
+    // Bilimsel referans: Haar Wavelet Transform, hiperspektral anomali tespitinde kanıtlanmış
+    // bir ön-işleme tekniğidir - veriyi düşük-frekans yaklaşım katsayıları (genel/arka plan
+    // davranışı) ve yüksek-frekans detay katsayılarına (ince yapılar, gürültü, kenarlar)
+    // ayrıştırır. Bizim Gaussian-fark tabanlı Katman Ayrıştırma (Layer Stripping) filtremizden
+    // FARKI: Haar DWT gerçek bir ORTOGONAL dönüşümdür (enerjiyi tam olarak korur - Parseval
+    // teoremi, gerçek bir testle doğrulanmıştır), Gaussian-fark ise sadece yaklaşık bir
+    // benzetmedir. Bu, Haar'ın matematiksel olarak daha "kesin" bir ayrıştırma sağladığı
+    // anlamına gelir.
+
+    /**
+     * Tek seviyeli 2D Haar Discrete Wavelet Transform. Görüntüyü 2x2'lik bloklara ayırıp
+     * her blok için 4 katsayı üretir: LL (ortalama/yaklaşım), LH (dikey detay), HL (yatay
+     * detay), HH (köşegen detay). Çıktı boyutu girişin yarısıdır (width/2 x height/2).
+     * Tek sayılı boyutlarda son satır/sütun güvenle atlanır (taşma önlenir).
+     */
+    private fun haarDwt2D(data: FloatArray, width: Int, height: Int): HaarResult {
+        val halfW = width / 2
+        val halfH = height / 2
+
+        val ll = FloatArray(halfW * halfH)
+        val lh = FloatArray(halfW * halfH)
+        val hl = FloatArray(halfW * halfH)
+        val hh = FloatArray(halfW * halfH)
+
+        for (row in 0 until halfH) {
+            for (col in 0 until halfW) {
+                val a = data[(2 * row) * width + (2 * col)]
+                val b = data[(2 * row) * width + (2 * col + 1)]
+                val c = data[(2 * row + 1) * width + (2 * col)]
+                val d = data[(2 * row + 1) * width + (2 * col + 1)]
+
+                // Kapalı-form formül: iki ardışık (satır+sütun) 1/sqrt2 normalizasyonlu Haar
+                // adımının birleşimi, toplam normalizasyon faktörü 1/sqrt2 * 1/sqrt2 = 1/2'dir
+                // (2*sqrt2 DEĞİL - bu, gerçek bir testle (sequential referans yöntemle
+                // karşılaştırma) bulunan ve düzeltilen bir hesaplama hatasıydı).
+                val idx = row * halfW + col
+                ll[idx] = (a + b + c + d) / 2f
+                lh[idx] = (a + b - c - d) / 2f // dikey detay (üst-alt farkı)
+                hl[idx] = (a - b + c - d) / 2f // yatay detay (sol-sağ farkı)
+                hh[idx] = (a - b - c + d) / 2f // köşegen detay
+            }
+        }
+        return HaarResult(ll, lh, hl, hh, halfW, halfH)
+    }
+
+    private data class HaarResult(val ll: FloatArray, val lh: FloatArray, val hl: FloatArray, val hh: FloatArray, val width: Int, val height: Int)
+
+    /**
+     * Wavelet Detay Katsayısı: Haar DWT'nin üç detay bileşenini (LH, HL, HH) birleştirip
+     * tek bir "yüksek frekans enerjisi" skoru üretir: magnitude = sqrt(LH²+HL²+HH²) -
+     * Analytic Signal'ın frekans-domain eşdeğeri gibi düşünülebilir. Çıktı, orijinal grid
+     * boyutunun YARISINDADIR (Haar DWT'nin doğası gereği) - bu yüzden sonuç, en yakın
+     * komşu (nearest-neighbor) ile orijinal boyuta geri ölçeklenir, ResultActivity'nin
+     * beklediği grid boyutuyla tutarlı kalması için.
+     *
+     * Gerçek bir testle doğrulanmıştır: enerji korunumu (Parseval teoremi) makine
+     * hassasiyetinde sağlanmış, ve 4x4'lük bir blok anomali detay katsayılarında
+     * (LH, HL, HH hepsinde) sıfırdan farklı, anlamlı bir tepki üretmiştir.
+     */
+    fun waveletDetail(data: FloatArray, width: Int, height: Int): FloatArray {
+        val haar = haarDwt2D(data, width, height)
+        val detailMagnitude = FloatArray(haar.width * haar.height) { i ->
+            sqrt(haar.lh[i] * haar.lh[i] + haar.hl[i] * haar.hl[i] + haar.hh[i] * haar.hh[i])
+        }
+
+        // Yarı boyuttaki sonucu orijinal grid boyutuna nearest-neighbor ile geri ölçekle.
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val srcRow = (row / 2).coerceAtMost(haar.height - 1)
+                val srcCol = (col / 2).coerceAtMost(haar.width - 1)
+                out[row * width + col] = detailMagnitude[srcRow * haar.width + srcCol]
+            }
+        }
+        return out
     }
 }
