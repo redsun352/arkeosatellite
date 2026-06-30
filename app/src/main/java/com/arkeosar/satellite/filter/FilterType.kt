@@ -49,4 +49,5 @@ enum class FilterType(val label: String) {
     RIDGE_DETECTOR("Sırt/Koridor Dedektörü (Tünel-Koridor)"),
     STANDARD_DEVIATION("Standart Sapma (Yerel Değişkenlik)"),
     COMPASS_GRADIENT("Pusula Gradyanı (8 Yön)"),
+    CONSENSUS_SCORE("Konsensüs Skoru (Çoklu Filtre Oylaması)"),
 }
