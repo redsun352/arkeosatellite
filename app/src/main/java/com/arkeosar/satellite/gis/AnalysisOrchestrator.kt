@@ -27,7 +27,7 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
 
     companion object {
         /** 3D yüzey görselleştirmesi için downsample edilmiş grid boyutu (kare, NxN). */
-        private const val HEIGHTMAP_GRID_SIZE = 48
+        private const val HEIGHTMAP_GRID_SIZE = 96
     }
 
     suspend fun analyze(polygon: ScanPolygon, dateRange: DateRange): AnalysisResult = coroutineScope {

@@ -5,9 +5,9 @@ import android.graphics.Color
 import com.arkeosar.satellite.model.HeightmapGrid
 
 /**
- * HeightmapGrid'i (48x48 skor matrisi) kesintisiz, piksel-piksel boyalı bir Bitmap'e
- * çevirir - bu bitmap GoogleMap'e bir GroundOverlay olarak yapıştırılır (TileOverlay/Circle
- * yığını değil), kullanıcının istediği "Surfer/termal tarama tarzı" sürekli doku için.
+ * HeightmapGrid'i (96x96 skor matrisi) kesintisiz, akıcı geçişli bir Bitmap'e çevirir -
+ * bu bitmap GoogleMap'e bir GroundOverlay olarak yapıştırılır (TileOverlay/Circle yığını
+ * değil), kullanıcının istediği "Surfer/termal tarama tarzı" sürekli doku için.
  *
  * İki renk paleti desteklenir:
  *  - SEPIA: koyu kahverengi/siyahtan krem/açık sarıya geçiş - kullanıcının referans
@@ -15,16 +15,23 @@ import com.arkeosar.satellite.model.HeightmapGrid
  *  - CLASSIC: mevcut mavi-sarı-kırmızı bilimsel renk skalası (ResultActivity'nin
  *    eski Circle tabanlı gösteriminde kullanılan renklerle aynı).
  *
- * Bitmap, grid çözünürlüğünde (48x48) üretilir ve GroundOverlay'in kendisi GPU/Android
- * tarafında ekrana ölçeklenirken bilinçli olarak NEAREST (pikselli, bulanıklaştırılmamış)
- * filtrelenir - bu, "ham veri dokusu" hissini korur, aşırı yumuşatılmış bir görünüm vermez.
+ * AKIŞKANLIK NOTU: Bitmap önce grid çözünürlüğünde (örn. 96x96) üretilir, sonra
+ * Bitmap.createScaledBitmap ile daha büyük bir hedef boyuta (UPSCALE_TARGET) BİLİNEAR
+ * FİLTRELEME kullanılarak büyütülür - bu, Android'in resmi dokümantasyonunda "bilinear
+ * filtering kullanıldığında ölçeklendirme sırasında daha iyi görüntü kalitesi" sağladığı
+ * doğrulanmış bir tekniktir. Sonuç, sert piksel kenarları yerine yumuşak/organik geçişler
+ * veren bir doku üretir - kullanıcının referans aldığı görüntüdeki akışkan görünüme
+ * yaklaşmak için eklenmiştir.
  */
 object HeatmapBitmapRenderer {
 
     enum class Palette { SEPIA, CLASSIC }
 
+    /** Bilinear upscale hedef boyutu - grid çözünürlüğünden bağımsız, sabit bir görsel pürüzsüzlük sağlar. */
+    private const val UPSCALE_TARGET = 512
+
     fun render(grid: HeightmapGrid, palette: Palette, alpha: Int = 200): Bitmap {
-        val bitmap = Bitmap.createBitmap(grid.width, grid.height, Bitmap.Config.ARGB_8888)
+        val rawBitmap = Bitmap.createBitmap(grid.width, grid.height, Bitmap.Config.ARGB_8888)
         for (row in 0 until grid.height) {
             for (col in 0 until grid.width) {
                 val score = grid.scores[row * grid.width + col].coerceIn(0f, 1f)
@@ -32,10 +39,13 @@ object HeatmapBitmapRenderer {
                     Palette.SEPIA -> sepiaColor(score, alpha)
                     Palette.CLASSIC -> classicColor(score, alpha)
                 }
-                bitmap.setPixel(col, row, color)
+                rawBitmap.setPixel(col, row, color)
             }
         }
-        return bitmap
+        // Bilinear filtreleme ile büyüt - akışkan/yumuşak geçişler için (filter=true).
+        val scaled = Bitmap.createScaledBitmap(rawBitmap, UPSCALE_TARGET, UPSCALE_TARGET, true)
+        if (scaled !== rawBitmap) rawBitmap.recycle() // bellek sızıntısını önlemek için orijinali serbest bırak
+        return scaled
     }
 
     /**
