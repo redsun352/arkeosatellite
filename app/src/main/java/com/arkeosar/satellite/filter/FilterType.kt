@@ -46,4 +46,5 @@ enum class FilterType(val label: String) {
     MORPHOLOGICAL_OPENING("Morfolojik Açma (Gürültü Temizleme)"),
     MORPHOLOGICAL_CLOSING("Morfolojik Kapama (Boşluk Doldurma)"),
     MORPHOLOGICAL_GRADIENT("Morfolojik Gradyan (Kalın Kenar)"),
+    RIDGE_DETECTOR("Sırt/Koridor Dedektörü (Tünel-Koridor)"),
 }

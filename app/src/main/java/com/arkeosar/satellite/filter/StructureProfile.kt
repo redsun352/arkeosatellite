@@ -65,19 +65,19 @@ enum class StructureProfile(
         label = "Giriş",
         typicalSizeMeters = 1.5,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.LAYER_SHALLOW, FilterType.TDX, FilterType.GRADIENT, FilterType.HIGH_PASS, FilterType.EDGE_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.RIDGE_DETECTOR, FilterType.LAYER_SHALLOW, FilterType.TDX, FilterType.GRADIENT, FilterType.HIGH_PASS, FilterType.EDGE_ENHANCEMENT)
     ),
     TUNNEL(
         label = "Tünel",
         typicalSizeMeters = 1.8,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.RIDGE_DETECTOR, FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT)
     ),
     CORRIDOR(
         label = "Koridor",
         typicalSizeMeters = 2.0,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.RIDGE_DETECTOR, FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.LOCAL_CONTRAST)
     );
 
     /**
