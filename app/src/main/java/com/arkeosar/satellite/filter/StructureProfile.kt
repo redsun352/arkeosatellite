@@ -59,7 +59,7 @@ enum class StructureProfile(
         label = "Boşluk (Genel)",
         typicalSizeMeters = 3.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.RX_MULTIBAND_LOCAL, FilterType.GLCM_CONTRAST, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
+        recommendedFilters = listOf(FilterType.RX_MULTIBAND_LOCAL, FilterType.STANDARD_DEVIATION, FilterType.GLCM_CONTRAST, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
     ),
     ENTRANCE(
         label = "Giriş",
@@ -71,7 +71,7 @@ enum class StructureProfile(
         label = "Tünel",
         typicalSizeMeters = 1.8,
         isElongated = true,
-        recommendedFilters = listOf(FilterType.RIDGE_DETECTOR, FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT)
+        recommendedFilters = listOf(FilterType.RIDGE_DETECTOR, FilterType.COMPASS_GRADIENT, FilterType.LAYER_MEDIUM, FilterType.TDX, FilterType.GRADIENT, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT)
     ),
     CORRIDOR(
         label = "Koridor",

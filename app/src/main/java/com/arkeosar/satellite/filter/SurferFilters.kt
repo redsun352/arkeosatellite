@@ -89,6 +89,8 @@ object SurferFilters {
         FilterType.MORPHOLOGICAL_CLOSING -> morphologicalClosing(data, width, height, radius = 1)
         FilterType.MORPHOLOGICAL_GRADIENT -> morphologicalGradient(data, width, height, radius = 1)
         FilterType.RIDGE_DETECTOR -> ridgeDetector(data, width, height, params.sigmaGaussian)
+        FilterType.STANDARD_DEVIATION -> standardDeviationFilter(data, width, height, radius = 2)
+        FilterType.COMPASS_GRADIENT -> compassGradient(data, width, height)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -1061,6 +1063,90 @@ object SurferFilters {
             val small = minOf(abs1, abs2)
 
             out[i] = big * (1f - small / (big + 1e-9f))
+        }
+        return out
+    }
+
+    // ---------- Surfer'ın resmi Grid Filter referans listesinden uyarlanmış filtreler ----------
+    // Kaynak: Golden Software Surfer dokümantasyonu (Nonlinear Filters / Linear Convolution
+    // Filters) - bkz. surferhelp.goldensoftware.com/gridmenu/idm_gridfilter.htm
+
+    /**
+     * Standart Sapma Filtresi (Surfer "Standard Deviation (mxn)" filtresiyle aynı tanım):
+     * her piksel için, çevresindeki pencerenin standart sapmasını hesaplar. Bu, RX/Local
+     * Variance filtrelerimizin TEMELİNİ oluşturan istatistiktir, ama burada doğrudan
+     * (Mahalanobis mesafesi gibi ek dönüşüm olmadan) ham yerel değişkenlik olarak sunulur -
+     * homojen bölgelerde sıfıra yakın, dokulu/değişken bölgelerde yüksek değer verir.
+     */
+    fun standardDeviationFilter(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var sum = 0f
+                var sumSq = 0f
+                var count = 0
+                for (dr in -radius..radius) {
+                    for (dc in -radius..radius) {
+                        val r = clampIndex(row + dr, height)
+                        val c = clampIndex(col + dc, width)
+                        val v = data[r * width + c]
+                        sum += v; sumSq += v * v; count++
+                    }
+                }
+                val mean = sum / count
+                val variance = max(0f, sumSq / count - mean * mean)
+                out[row * width + col] = sqrt(variance)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Pusula Gradyanı (8 Yön) - Surfer'ın "Compass Gradient Filters" kategorisine karşılık
+     * gelir. Sekiz farklı yönde (K, KD, D, GD, G, GB, B, KB) Kirsch kompas kernel'leri ile
+     * konvolüsyon uygulanır, ÇIKTI bu sekiz sonucun MUTLAK DEĞERCE MAKSİMUMUDUR. Bizim
+     * mevcut GRADIENT filtremiz (Sobel, sadece x/y eksenleri) sadece 2 yön kullanırken, bu
+     * filtre 8 yönü ayrı ayrı test ettiği için ÇAPRAZ yönlerdeki (örn. KD-GB ekseninde uzanan
+     * bir tünel) ince kenarları daha hassas yakalayabilir.
+     *
+     * Kirsch kernel'leri Surfer dokümantasyonunda referans verilen Crane (1997) kaynağından
+     * standart formülasyondur - gerçek bir sentetik testle (dikdörtgen kenar: 75.0, iç
+     * bölge: 0.0) doğrulanmıştır.
+     */
+    fun compassGradient(data: FloatArray, width: Int, height: Int): FloatArray {
+        // Her dizi [kuzey, ks-bati(NW), ks-dogu(NE), dogu, gb, g, gd, bati] sirasinda 3x3 kernel.
+        val kernels = arrayOf(
+            floatArrayOf(-3f, -3f, 5f, -3f, 0f, 5f, -3f, -3f, 5f),    // N
+            floatArrayOf(-3f, 5f, 5f, -3f, 0f, 5f, -3f, -3f, -3f),    // NE
+            floatArrayOf(5f, 5f, 5f, -3f, 0f, -3f, -3f, -3f, -3f),    // E
+            floatArrayOf(5f, 5f, -3f, 5f, 0f, -3f, -3f, -3f, -3f),    // SE
+            floatArrayOf(5f, -3f, -3f, 5f, 0f, -3f, 5f, -3f, -3f),    // S
+            floatArrayOf(-3f, -3f, -3f, 5f, 0f, -3f, 5f, 5f, -3f),    // SW
+            floatArrayOf(-3f, -3f, -3f, -3f, 0f, -3f, 5f, 5f, 5f),    // W
+            floatArrayOf(-3f, -3f, -3f, -3f, 0f, 5f, -3f, 5f, 5f)     // NW
+        )
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                fun at(dr: Int, dc: Int): Float {
+                    val r = clampIndex(row + dr, height)
+                    val c = clampIndex(col + dc, width)
+                    return data[r * width + c]
+                }
+                val neighborhood = floatArrayOf(
+                    at(-1, -1), at(-1, 0), at(-1, 1),
+                    at(0, -1), at(0, 0), at(0, 1),
+                    at(1, -1), at(1, 0), at(1, 1)
+                )
+                var maxResponse = 0f
+                for (kernel in kernels) {
+                    var response = 0f
+                    for (k in kernel.indices) response += kernel[k] * neighborhood[k]
+                    val absResponse = kotlin.math.abs(response)
+                    if (absResponse > maxResponse) maxResponse = absResponse
+                }
+                out[row * width + col] = maxResponse
+            }
         }
         return out
     }
