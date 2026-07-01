@@ -27,14 +27,18 @@ object HeatmapBitmapRenderer {
 
     enum class Palette { SEPIA, CLASSIC }
 
-    /** Bilinear upscale hedef boyutu - grid çözünürlüğünden bağımsız, sabit bir görsel pürüzsüzlük sağlar. */
-    private const val UPSCALE_TARGET = 512
+    private const val UPSCALE_TARGET = 1024  // 512'den 1024'e çıkardık — daha yüksek son çözünürlük
+    private const val BLUR_SIGMA = 1.2f      // Gaussian blur sigma — görsel yumuşatma için
 
     fun render(grid: HeightmapGrid, palette: Palette, alpha: Int = 200): Bitmap {
+        // 1) Grid değerlerine önce Gaussian blur uygula — piksel piksel keskin geçişleri yumuşat.
+        //    Bu, filtrelerin matematiksel sonuçlarını bozmaz; sadece görsel geçişleri pürüzsüzleştirir.
+        val smoothed = gaussianBlurGrid(grid.scores, grid.width, grid.height, BLUR_SIGMA)
+
         val rawBitmap = Bitmap.createBitmap(grid.width, grid.height, Bitmap.Config.ARGB_8888)
         for (row in 0 until grid.height) {
             for (col in 0 until grid.width) {
-                val score = grid.scores[row * grid.width + col].coerceIn(0f, 1f)
+                val score = smoothed[row * grid.width + col].coerceIn(0f, 1f)
                 val color = when (palette) {
                     Palette.SEPIA -> sepiaColor(score, alpha)
                     Palette.CLASSIC -> classicColor(score, alpha)
@@ -42,10 +46,51 @@ object HeatmapBitmapRenderer {
                 rawBitmap.setPixel(col, row, color)
             }
         }
-        // Bilinear filtreleme ile büyüt - akışkan/yumuşak geçişler için (filter=true).
+        // 2) Bilinear filtreleme ile büyüt — pürüzsüz piksel arası geçişler için.
         val scaled = Bitmap.createScaledBitmap(rawBitmap, UPSCALE_TARGET, UPSCALE_TARGET, true)
-        if (scaled !== rawBitmap) rawBitmap.recycle() // bellek sızıntısını önlemek için orijinali serbest bırak
+        if (scaled !== rawBitmap) rawBitmap.recycle()
         return scaled
+    }
+
+    /**
+     * Separable 1D Gaussian blur (yatay + dikey iki geçiş) — O(n*radius) karmaşıklığı,
+     * 2D convolution'dan çok daha hızlı. Kernel yarıçapı sigma*3 ile sınırlandırılır.
+     */
+    private fun gaussianBlurGrid(data: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {
+        val radius = (sigma * 3).toInt().coerceAtLeast(1)
+        val kernel = FloatArray(2 * radius + 1) { i ->
+            val x = (i - radius).toFloat()
+            kotlin.math.exp(-(x * x) / (2f * sigma * sigma))
+        }
+        val kernelSum = kernel.sum()
+        for (i in kernel.indices) kernel[i] /= kernelSum
+
+        // Yatay geçiş
+        val temp = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var acc = 0f
+                for (k in -radius..radius) {
+                    val c = (col + k).coerceIn(0, width - 1)
+                    acc += data[row * width + c] * kernel[k + radius]
+                }
+                temp[row * width + col] = acc
+            }
+        }
+
+        // Dikey geçiş
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var acc = 0f
+                for (k in -radius..radius) {
+                    val r = (row + k).coerceIn(0, height - 1)
+                    acc += temp[r * width + col] * kernel[k + radius]
+                }
+                out[row * width + col] = acc
+            }
+        }
+        return out
     }
 
     /**

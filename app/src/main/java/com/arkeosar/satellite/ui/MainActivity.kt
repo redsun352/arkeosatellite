@@ -275,6 +275,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                         putExtra(ResultActivity.EXTRA_HEIGHTMAP_WIDTH, hm.width)
                         putExtra(ResultActivity.EXTRA_HEIGHTMAP_HEIGHT, hm.height)
                         putExtra(ResultActivity.EXTRA_HEIGHTMAP_SCORES, hm.scores)
+                        hm.rawDem?.let { putExtra(ResultActivity.EXTRA_HEIGHTMAP_DEM, it) }
+                        hm.rawNdvi?.let { putExtra(ResultActivity.EXTRA_HEIGHTMAP_NDVI, it) }
+                        hm.rawNdwi?.let { putExtra(ResultActivity.EXTRA_HEIGHTMAP_NDWI, it) }
                     }
                 }
                 startActivity(intent)

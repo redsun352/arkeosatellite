@@ -3,32 +3,41 @@ package com.arkeosar.satellite.gl
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import com.arkeosar.satellite.filter.StructureProfile
 import com.arkeosar.satellite.model.HeightmapGrid
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.sqrt
 
 /**
- * HeightmapGrid'i basit bir 3D yüzey (üçgen mesh) olarak render eden OpenGL ES 2.0 renderer.
+ * HeightmapGrid'i 3D yüzey (üçgen mesh) olarak render eden OpenGL ES 2.0 renderer.
  *
- * Tasarım kararı: Senin Kayser AreaScan / ArkeoSAR Ground Scan projelerindeki yaklaşımla
- * tutarlı olması için harici bir 3D kütüphane (örn. SceneForm, Filament) kullanılmadı -
- * doğrudan GLSurfaceView + el yazımı vertex/fragment shader'lar ile basit ve bağımlılıksız
- * bir render yapılıyor.
+ * İki katmanlı render:
+ *  1. ZEMIN KATMANI (DEM): rawDem varsa gerçek arazi formu, yoksa düz bir taban.
+ *     Gri tonlarla renklendirilen zemin, arazi bağlamını gösterir.
+ *  2. ANOMALİ KATMANI: Filtre skoru Y eksenine (yükseklik) dönüştürülerek zemin
+ *     üstüne eklenir. Adaptif ölçekleme: skor aralığı küçükse yükseltilir —
+ *     ince farklılıklar görünür kılınır.
  *
- * Görselleştirme mantığı:
- *  - X/Z eksenleri grid'in genişlik/derinliğini temsil eder (düzleme yayılmış grid).
- *  - Y ekseni (yükseklik) skor değerinden gelir: yüksek anomali skoru = yüksek tepe.
- *  - Renk de skordan gelir (mavi->sarı->kırmızı), ResultActivity'deki 2D harita renklendirmesiyle
- *    tutarlı bir skala kullanılarak - kullanıcı iki görünüm arasında geçiş yaptığında aynı
- *    renk dilini görsün diye.
+ * Yapı tipine göre renklendirme:
+ *  - Oda/Mahzen/Lahit: turuncu-sarı (kompakt kapalı yapılar)
+ *  - Kuyu: mavi-cyan (derin dikey yapılar)
+ *  - Tünel/Koridor/Giriş: yeşil (uzayan doğrusal yapılar)
+ *  - Mezar/Sarkofag: mor-pembe (gömme yapıları)
+ *  - Diğer/Genel: mavi→sarı→kırmızı (standart ısı haritası)
  */
-class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Renderer {
+class HeightmapGlRenderer(
+    initialHeightmap: HeightmapGrid,
+    initialProfile: StructureProfile = StructureProfile.VOID
+) : GLSurfaceView.Renderer {
 
     companion object {
-        private const val HEIGHT_SCALE = 1.4f // skor[0,1] -> dünya birimi yükseklik çarpanı
+        private const val DEM_SCALE = 0.3f       // DEM yüksekliği [m] -> dünya birimi (görsel oran)
+        private const val ANOMALY_SCALE = 1.8f   // anomali skoru [0,1] -> dünya birimi
+        private const val DEM_LAYER_OFFSET = 0f  // DEM zemin katmanının taban ofseti
 
         private const val VERTEX_SHADER = """
             uniform mat4 uMVPMatrix;
@@ -40,7 +49,6 @@ class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Rende
                 vColor = aColor;
             }
         """
-
         private const val FRAGMENT_SHADER = """
             precision mediump float;
             varying vec4 vColor;
@@ -50,17 +58,12 @@ class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Rende
         """
     }
 
-    // @Volatile: ResultActivity (UI thread) bu referansı değiştirir, GL render thread'i okur.
-    // Gerçek mesh yeniden inşası (buildMesh) GL thread'inde onDrawFrame'de yapılır - vertex/color
-    // buffer'lar GL context'ine bağlı olduğu için doğrudan UI thread'inden oluşturulmamalıdır.
     @Volatile private var heightmap = initialHeightmap
+    @Volatile private var profile = initialProfile
     @Volatile private var meshDirty = true
 
-    /** Grid'i değiştirir (örn. filtre uygulandığında) - asıl mesh yeniden inşası GL thread'inde olur. */
-    fun updateGrid(newHeightmap: HeightmapGrid) {
-        heightmap = newHeightmap
-        meshDirty = true
-    }
+    fun updateGrid(newHeightmap: HeightmapGrid) { heightmap = newHeightmap; meshDirty = true }
+    fun updateProfile(newProfile: StructureProfile) { profile = newProfile; meshDirty = true }
 
     private var program = 0
     private var positionHandle = 0
@@ -75,23 +78,18 @@ class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Rende
     private val projectionMatrix = FloatArray(16)
     private val viewMatrix = FloatArray(16)
 
-    @Volatile var rotationDegrees = 0f // kullanıcı dokunarak döndürebilir (ResultActivity bağlar)
+    @Volatile var rotationDegrees = 0f
     @Volatile var tiltDegrees = 35f
 
     override fun onSurfaceCreated(unused: GL10?, config: EGLConfig?) {
-        GLES20.glClearColor(0.05f, 0.07f, 0.09f, 1f) // bg_base ile tutarlı koyu arka plan
+        GLES20.glClearColor(0.05f, 0.05f, 0.1f, 1f)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
-
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER)
-        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER)
         program = GLES20.glCreateProgram().also {
-            GLES20.glAttachShader(it, vertexShader)
-            GLES20.glAttachShader(it, fragmentShader)
+            GLES20.glAttachShader(it, loadShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER))
+            GLES20.glAttachShader(it, loadShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER))
             GLES20.glLinkProgram(it)
         }
-
         buildMesh()
-        meshDirty = false
     }
 
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
@@ -101,22 +99,18 @@ class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Rende
     }
 
     override fun onDrawFrame(unused: GL10?) {
-        if (meshDirty) {
-            buildMesh()
-            meshDirty = false
-        }
-
+        if (meshDirty) { buildMesh(); meshDirty = false }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glUseProgram(program)
 
-        val eyeDistance = 4.2f
-        val radians = Math.toRadians(rotationDegrees.toDouble())
-        val tiltRadians = Math.toRadians(tiltDegrees.toDouble())
-        val eyeX = (eyeDistance * Math.cos(tiltRadians) * Math.sin(radians)).toFloat()
-        val eyeZ = (eyeDistance * Math.cos(tiltRadians) * Math.cos(radians)).toFloat()
-        val eyeY = (eyeDistance * Math.sin(tiltRadians)).toFloat()
+        val eyeDistance = 4.5f
+        val rad = Math.toRadians(rotationDegrees.toDouble())
+        val tilt = Math.toRadians(tiltDegrees.toDouble())
+        val eyeX = (eyeDistance * Math.cos(tilt) * Math.sin(rad)).toFloat()
+        val eyeZ = (eyeDistance * Math.cos(tilt) * Math.cos(rad)).toFloat()
+        val eyeY = (eyeDistance * Math.sin(tilt)).toFloat()
 
-        Matrix.setLookAtM(viewMatrix, 0, eyeX, eyeY, eyeZ, 0f, 0f, 0f, 0f, 1f, 0f)
+        Matrix.setLookAtM(viewMatrix, 0, eyeX, eyeY, eyeZ, 0f, 0.2f, 0f, 0f, 1f, 0f)
         Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, viewMatrix, 0)
 
         positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
@@ -138,56 +132,131 @@ class HeightmapGlRenderer(initialHeightmap: HeightmapGrid) : GLSurfaceView.Rende
         GLES20.glDisableVertexAttribArray(colorHandle)
     }
 
-    /** Grid'i (width x height skor matrisi) bir üçgen mesh'e çevirir - her hücre 2 üçgen (quad). */
     private fun buildMesh() {
         val w = heightmap.width
         val h = heightmap.height
-        val positions = mutableListOf<Float>()
-        val colors = mutableListOf<Float>()
+        val scores = heightmap.scores
+        val dem = heightmap.rawDem
 
-        fun heightAt(row: Int, col: Int): Float = heightmap.scores[row * w + col] * HEIGHT_SCALE
+        // Adaptif yükseklik ölçekleme: skor aralığı 0.3'ten azsa, görünürlük için büyüt.
+        val scoreMin = scores.min()
+        val scoreMax = scores.max()
+        val scoreRange = (scoreMax - scoreMin).coerceAtLeast(0.01f)
+        val adaptiveScale = if (scoreRange < 0.3f) ANOMALY_SCALE * (0.3f / scoreRange) else ANOMALY_SCALE
+        val effectiveScale = adaptiveScale.coerceAtMost(4f) // çok aşırı büyütmeyi engelle
+
+        // DEM normalizasyonu (varsa): görsel zemin için [0,DEM_SCALE] aralığına çek.
+        val demMin = dem?.min() ?: 0f
+        val demMax = dem?.max() ?: 0f
+        val demRange = (demMax - demMin).coerceAtLeast(1f)
+
+        fun demHeightAt(idx: Int): Float {
+            if (dem == null) return 0f
+            return ((dem[idx] - demMin) / demRange) * DEM_SCALE
+        }
+
+        fun anomalyHeightAt(idx: Int): Float =
+            ((scores[idx] - scoreMin) / scoreRange) * effectiveScale
+
         fun worldX(col: Int): Float = (col.toFloat() / (w - 1) - 0.5f) * 2f
         fun worldZ(row: Int): Float = (row.toFloat() / (h - 1) - 0.5f) * 2f
 
-        fun addVertex(row: Int, col: Int) {
-            val score = heightmap.scores[row * w + col]
-            positions.add(worldX(col)); positions.add(heightAt(row, col)); positions.add(worldZ(row))
-            val (r, g, b) = scoreToRgb(score.toDouble())
-            colors.add(r); colors.add(g); colors.add(b); colors.add(1f)
+        val positions = mutableListOf<Float>()
+        val colors = mutableListOf<Float>()
+
+        fun addVertex(row: Int, col: Int, isGroundLayer: Boolean) {
+            val idx = row * w + col
+            val demH = demHeightAt(idx)
+            val anomalyH = if (isGroundLayer) 0f else anomalyHeightAt(idx)
+            val totalY = demH + DEM_LAYER_OFFSET + anomalyH
+
+            positions.add(worldX(col))
+            positions.add(totalY)
+            positions.add(worldZ(row))
+
+            val (r, g, b, a) = if (isGroundLayer) {
+                // Zemin katmanı: gri tonlar, arazi bağlamı
+                val grayBase = 0.25f + (demH / DEM_SCALE) * 0.3f
+                floatArrayOf(grayBase, grayBase + 0.05f, grayBase + 0.08f, 0.85f)
+            } else {
+                // Anomali katmanı: yapı tipine göre renk
+                val score = (scores[idx] - scoreMin) / scoreRange
+                val rgba = profileColor(score.toDouble(), profile)
+                floatArrayOf(rgba[0], rgba[1], rgba[2], rgba[3])
+            }
+            colors.add(r); colors.add(g); colors.add(b); colors.add(a)
         }
 
+        // Önce zemin katmanı (DEM varsa göster)
+        if (dem != null) {
+            for (row in 0 until h - 1) {
+                for (col in 0 until w - 1) {
+                    addVertex(row, col, true); addVertex(row, col + 1, true); addVertex(row + 1, col, true)
+                    addVertex(row, col + 1, true); addVertex(row + 1, col + 1, true); addVertex(row + 1, col, true)
+                }
+            }
+        }
+
+        // Sonra anomali katmanı (filtre skoru)
         for (row in 0 until h - 1) {
             for (col in 0 until w - 1) {
-                // Quad (row,col)-(row,col+1)-(row+1,col)-(row+1,col+1) -> 2 üçgen
-                addVertex(row, col); addVertex(row, col + 1); addVertex(row + 1, col)
-                addVertex(row, col + 1); addVertex(row + 1, col + 1); addVertex(row + 1, col)
+                addVertex(row, col, false); addVertex(row, col + 1, false); addVertex(row + 1, col, false)
+                addVertex(row, col + 1, false); addVertex(row + 1, col + 1, false); addVertex(row + 1, col, false)
             }
         }
 
         vertexCount = positions.size / 3
-
         vertexBuffer = ByteBuffer.allocateDirect(positions.size * 4)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
-                put(positions.toFloatArray()); position(0)
-            }
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(positions.toFloatArray()); position(0) }
         colorBuffer = ByteBuffer.allocateDirect(colors.size * 4)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
-                put(colors.toFloatArray()); position(0)
-            }
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(colors.toFloatArray()); position(0) }
     }
 
-    /** ResultActivity'deki 2D harita renklendirmesiyle (mavi->sarı->kırmızı) tutarlı skala. */
-    private fun scoreToRgb(score: Double): Triple<Float, Float, Float> {
-        val s = score.coerceIn(0.0, 1.0)
-        return if (s < 0.5) {
-            val t = (s / 0.5).toFloat()
-            Triple(0.13f + t * (1f - 0.13f), 0.40f + t * (0.86f - 0.40f), 0.67f + t * (0.24f - 0.67f))
-        } else {
-            val t = ((s - 0.5) / 0.5).toFloat()
-            Triple(1f, 0.86f - t * (0.86f - 0.12f), 0.24f - t * 0.24f)
+    /**
+     * Yapı tipine göre renk paleti:
+     *  - Oda/Mahzen/Lahit: turuncu-altın (kapalı kompakt yapılar)
+     *  - Kuyu: mavi-cyan (derin dikey)
+     *  - Tünel/Koridor/Giriş: yeşil-sarı (uzayan doğrusal)
+     *  - Mezar/Sarkofag: mor-pembe (gömme yapıları)
+     *  - Diğer: klasik ısı haritası (mavi→sarı→kırmızı)
+     */
+    private fun profileColor(score: Double, p: StructureProfile): FloatArray {
+        val s = score.coerceIn(0.0, 1.0).toFloat()
+        return when (p) {
+            StructureProfile.CHAMBER, StructureProfile.CRYPT, StructureProfile.SARCOPHAGUS -> {
+                // Turuncu-altın: kompakt kapalı yapılar
+                floatArrayOf(0.2f + s * 0.8f, 0.15f + s * 0.7f, 0f, 0.9f)
+            }
+            StructureProfile.WELL -> {
+                // Mavi-cyan: derin dikey yapılar
+                floatArrayOf(0f, 0.3f + s * 0.5f, 0.5f + s * 0.5f, 0.9f)
+            }
+            StructureProfile.TUNNEL, StructureProfile.CORRIDOR, StructureProfile.ENTRANCE -> {
+                // Yeşil-sarı: uzayan doğrusal yapılar
+                floatArrayOf(s * 0.7f, 0.4f + s * 0.6f, 0f, 0.9f)
+            }
+            StructureProfile.GRAVE, StructureProfile.SARCOPHAGUS -> {
+                // Mor-pembe: gömme yapıları
+                floatArrayOf(0.4f + s * 0.6f, 0f, 0.4f + s * 0.4f, 0.9f)
+            }
+            else -> {
+                // Klasik ısı haritası: mavi→sarı→kırmızı
+                if (s < 0.5f) {
+                    val t = s / 0.5f
+                    floatArrayOf(0.13f + t * 0.87f, 0.40f + t * 0.46f, 0.67f - t * 0.43f, 0.9f)
+                } else {
+                    val t = (s - 0.5f) / 0.5f
+                    floatArrayOf(1f, 0.86f - t * 0.74f, 0.24f - t * 0.24f, 0.9f)
+                }
+            }
         }
     }
 
     private fun loadShader(type: Int, source: String): Int =
-        GLES20.glCreateShader(type).also { GLES20.glShaderSource(it, source); GLES20.glCompileShader(it) }
+        GLES20.glCreateShader(type).also {
+            GLES20.glShaderSource(it, source)
+            GLES20.glCompileShader(it)
+        }
 }

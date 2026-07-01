@@ -51,6 +51,9 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         const val EXTRA_HEIGHTMAP_WIDTH = "extra_heightmap_width"
         const val EXTRA_HEIGHTMAP_HEIGHT = "extra_heightmap_height"
         const val EXTRA_HEIGHTMAP_SCORES = "extra_heightmap_scores"
+        const val EXTRA_HEIGHTMAP_DEM = "extra_heightmap_dem"
+        const val EXTRA_HEIGHTMAP_NDVI = "extra_heightmap_ndvi"
+        const val EXTRA_HEIGHTMAP_NDWI = "extra_heightmap_ndwi"
         const val EXTRA_BBOX_MIN_LAT = "extra_bbox_min_lat"
         const val EXTRA_BBOX_MAX_LAT = "extra_bbox_max_lat"
         const val EXTRA_BBOX_MIN_LNG = "extra_bbox_min_lng"
@@ -70,7 +73,10 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
     private var currentFilter: FilterType = FilterType.DETAILED
     private var currentProfile: StructureProfile = StructureProfile.VOID
     private var customSizeMeters: Double? = null // kullanıcı elle boyut girerse profilin varsayılanını ezer
-    private var currentOpacityPercent: Int = 85 // 0=tamamen şeffaf, 100=tamamen opak (SeekBar varsayılanıyla aynı)
+    private var currentOpacityPercent: Int = 85
+    private var demExclusionEnabled: Boolean = false
+    private var demZMin: Float? = null
+    private var demZMax: Float? = null // 0=tamamen şeffaf, 100=tamamen opak (SeekBar varsayılanıyla aynı)
 
     private var cellCount = 0
     private var sourcesText = "-"
@@ -91,6 +97,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         setupStructureSpinner()
         setupFilterSpinner()
         setupOpacitySeekBar()
+        setupDemExclusionPanel()
 
         val mapFragment = supportFragmentManager.findFragmentById(com.arkeosar.satellite.R.id.resultMapFragment) as? SupportMapFragment
         mapFragment?.getMapAsync(this)
@@ -107,7 +114,15 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         val scores = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_SCORES)
 
         if (width > 0 && height > 0 && scores != null && scores.size == width * height) {
-            originalGrid = HeightmapGrid(width = width, height = height, scores = scores)
+            val rawDem  = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_DEM)
+            val rawNdvi = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_NDVI)
+            val rawNdwi = intent.getFloatArrayExtra(EXTRA_HEIGHTMAP_NDWI)
+            originalGrid = HeightmapGrid(
+                width = width, height = height, scores = scores,
+                rawDem = rawDem, rawNdvi = rawNdvi, rawNdwi = rawNdwi
+            )
+            // DEM varsa exclusion panelini otomatik hazırla
+            rawDem?.let { showDemExclusionPanel(it) }
         }
 
         val minLat = intent.getDoubleExtra(EXTRA_BBOX_MIN_LAT, Double.NaN)
@@ -132,6 +147,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
                 currentProfile = StructureProfile.values()[position]
                 binding.customSizeInput.setText(currentProfile.typicalSizeMeters.toString())
                 customSizeMeters = null // profil değişince elle girilen özel boyutu sıfırla
+                heightmapRenderer?.updateProfile(currentProfile) // 3D renk paleti güncelle
 
                 // Android, bir Spinner'a adapter/listener atandığında OnItemSelectedListener'ı
                 // OTOMATİK olarak bir kere tetikler (position=0 ile) - bu, kullanıcının
@@ -202,6 +218,54 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
+    }
+
+    /**
+     * DEM Exclusion Filter panelini ayarlar. Panel, rawDem verisi yüklendiğinde görünür hale gelir.
+     * Switch açıkken min/max input alanları görünür — DEM verisi min/max'ı otomatik önerilir.
+     * Kullanıcı değerleri değiştirip Enter'a basınca (ya da focus değişince) filtre yeniden uygulanır.
+     */
+    private fun setupDemExclusionPanel() {
+        // Switch toggle
+        binding.demExclusionSwitch.setOnCheckedChangeListener { _, isChecked ->
+            demExclusionEnabled = isChecked
+            binding.demExclusionInputs.visibility =
+                if (isChecked) android.view.View.VISIBLE else android.view.View.GONE
+            applyFilterAndRefresh()
+        }
+
+        // Min/Max değişince filtre yeniden uygula
+        val reapplyOnChange = android.text.TextWatcher(
+            afterTextChanged = { applyFilterAndRefresh() }
+        )
+        binding.demZMinInput.addTextChangedListener(reapplyOnChange)
+        binding.demZMaxInput.addTextChangedListener(reapplyOnChange)
+    }
+
+    /**
+     * DEM verisi yüklendiğinde exclusion panelini göster ve otomatik min/max öner.
+     * "Makul analiz aralığı" = ortalama ± 1 std sapma, uç değerleri dışlar.
+     */
+    private fun showDemExclusionPanel(dem: FloatArray) {
+        val mean = dem.average().toFloat()
+        var variance = 0f
+        for (v in dem) { val d = v - mean; variance += d * d }
+        variance /= dem.size
+        val std = kotlin.math.sqrt(variance)
+
+        val autoMin = (mean - std).toInt()
+        val autoMax = (mean + std).toInt()
+        val absMin = dem.min().toInt()
+        val absMax = dem.max().toInt()
+
+        demZMin = autoMin.toFloat()
+        demZMax = autoMax.toFloat()
+
+        binding.demZMinInput.setText(autoMin.toString())
+        binding.demZMaxInput.setText(autoMax.toString())
+        binding.demExclusionHint.text =
+            "Aralık: $absMin m – $absMax m | Öneri: ortalama ± 1σ"
+        binding.demExclusionPanel.visibility = android.view.View.VISIBLE
     }
 
     /**
@@ -313,10 +377,29 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             }
         }
 
+        // DEM Exclusion Filter: switch açıksa ve rawDem varsa, belirtilen yükseklik
+        // aralığı (demZMin - demZMax) dışındaki pikselleri sıfırla — Surfer'ın
+        // "Exclusion Filter" mantığının Z koordinatı (DEM yüksekliği) üzerindeki karşılığı.
+        val dem = grid.rawDem
+        val exclusionApplied = demExclusionEnabled && dem != null
+        val effectiveScores = if (exclusionApplied) {
+            val zMin = binding.demZMinInput.text.toString().toFloatOrNull() ?: demZMin
+            val zMax = binding.demZMaxInput.text.toString().toFloatOrNull() ?: demZMax
+            FloatArray(filteredScores.size) { i ->
+                val elev = dem!![i]
+                val inRange = (zMin == null || elev >= zMin) && (zMax == null || elev <= zMax)
+                if (inRange) filteredScores[i] else 0f
+            }
+        } else filteredScores
+
         // 3D yüzeyi güncelle - filtrelenmiş skorlar [0,1] aralığını aşabilir (örn. Laplacian,
         // High Pass negatif değerler üretebilir) - renderer'a vermeden önce normalize ediyoruz.
-        val normalized = normalizeToUnitRange(filteredScores)
-        val filteredGrid = HeightmapGrid(width = grid.width, height = grid.height, scores = normalized)
+        // rawDem, rawNdvi vb. ham bantları da taşı - renderer zemin katmanı için rawDem'e ihtiyaç duyar.
+        val normalized = normalizeToUnitRange(effectiveScores)
+        val filteredGrid = HeightmapGrid(
+            width = grid.width, height = grid.height, scores = normalized,
+            rawDem = grid.rawDem, rawNdvi = grid.rawNdvi, rawNdwi = grid.rawNdwi
+        )
         heightmapRenderer?.updateGrid(filteredGrid)
         glSurfaceView?.requestRender()
 
@@ -402,7 +485,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
             return
         }
 
-        val renderer = HeightmapGlRenderer(grid)
+        val renderer = HeightmapGlRenderer(grid, currentProfile)
         heightmapRenderer = renderer
 
         val surfaceView = object : GLSurfaceView(this) {
