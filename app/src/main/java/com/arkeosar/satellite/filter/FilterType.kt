@@ -52,4 +52,5 @@ enum class FilterType(val label: String) {
     CONSENSUS_SCORE("Konsensüs Skoru (Çoklu Filtre Oylaması)"),
     WAVELET_DETAIL("Wavelet Detay Katsayısı (Haar)"),
     RBF_RESIDUAL("RBF Trend Çıkarma (Radyal Tabanlı Fonksiyon)"),
+    KRIGING_RESIDUAL("Kriging Trend Çıkarma (Ordinary Kriging)"),
 }
