@@ -53,4 +53,5 @@ enum class FilterType(val label: String) {
     WAVELET_DETAIL("Wavelet Detay Katsayısı (Haar)"),
     RBF_RESIDUAL("RBF Trend Çıkarma (Radyal Tabanlı Fonksiyon)"),
     KRIGING_RESIDUAL("Kriging Trend Çıkarma (Ordinary Kriging)"),
+    NEAREST_NEIGHBOR("En Yakın Komşu (Hücresel/Mozaik Segmentasyon)"),
 }

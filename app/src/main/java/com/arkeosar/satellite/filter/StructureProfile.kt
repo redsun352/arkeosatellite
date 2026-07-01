@@ -47,7 +47,7 @@ enum class StructureProfile(
         label = "Oda",
         typicalSizeMeters = 4.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.MORPHOLOGICAL_GRADIENT, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.NEAREST_NEIGHBOR, FilterType.MORPHOLOGICAL_GRADIENT, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     CRYPT(
         label = "Mahzen",

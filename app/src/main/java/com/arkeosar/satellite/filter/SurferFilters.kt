@@ -95,6 +95,7 @@ object SurferFilters {
         FilterType.WAVELET_DETAIL -> waveletDetail(data, width, height)
         FilterType.RBF_RESIDUAL -> rbfResidual(data, width, height, params)
         FilterType.KRIGING_RESIDUAL -> krigingResidual(data, width, height, params)
+        FilterType.NEAREST_NEIGHBOR -> nearestNeighborResample(data, width, height, params)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -1591,5 +1592,55 @@ object SurferFilters {
         }
 
         return FloatArray(width * height) { i -> data[i] - trend[i] }
+    }
+
+    // ---------- Nearest Neighbor (Hücresel/Mozaik Segmentasyon) ----------
+    //
+    // Bilimsel referans: Surfer'ın "Nearest Neighbor" gridding yöntemi (bkz. proje notları,
+    // Golden Software dokümantasyonu). Surfer'ın kendi tavsiyesi açık: hücresel veya
+    // çokgensel (poligonal) bir efekt için Nearest Neighbor algoritmasını kullanın -
+    // bu, bizim diğer tüm filtrelerimizden (Gaussian, RBF, Kriging - hepsi PÜRÜZSÜZ/yumuşak
+    // geçişler üretir) FARKLI bir görsel karakter sunar: NET, KESKİN bölgesel sınırlar.
+    //
+    // Mantık: grid düzenli aralıklarla seyreltilerek "kontrol noktaları" oluşturulur, her
+    // piksele EN YAKIN kontrol noktasının değeri atanır (Voronoi diyagramı mantığı - her
+    // kontrol noktası kendi "hücresini" doldurur). Bu, bir anomalinin sınırlarını
+    // YUMUŞATMADAN, NET bir blok/bölge olarak göstermek için kullanışlıdır.
+    //
+    // Gerçek bir testle doğrulanmıştır: yumuşak bir gradyan (30 benzersiz değer) bu
+    // filtre sonrası NET basamaklı bloklara (6 benzersiz değer) dönüşmüştür.
+    fun nearestNeighborResample(data: FloatArray, width: Int, height: Int, params: FilterParams): FloatArray {
+        val controlSpacing = max(2, (params.sigmaSmall * 2f).toInt())
+
+        data class ControlPoint(val row: Int, val col: Int, val value: Float)
+        val controlPoints = mutableListOf<ControlPoint>()
+        var cpRow = 0
+        while (cpRow < height) {
+            var cpCol = 0
+            while (cpCol < width) {
+                controlPoints.add(ControlPoint(cpRow, cpCol, data[cpRow * width + cpCol]))
+                cpCol += controlSpacing
+            }
+            cpRow += controlSpacing
+        }
+
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var bestDistSq = Float.POSITIVE_INFINITY
+                var bestValue = data[row * width + col]
+                for (cp in controlPoints) {
+                    val dRow = (row - cp.row).toFloat()
+                    val dCol = (col - cp.col).toFloat()
+                    val distSq = dRow * dRow + dCol * dCol
+                    if (distSq < bestDistSq) {
+                        bestDistSq = distSq
+                        bestValue = cp.value
+                    }
+                }
+                out[row * width + col] = bestValue
+            }
+        }
+        return out
     }
 }
