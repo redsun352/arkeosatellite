@@ -54,4 +54,5 @@ enum class FilterType(val label: String) {
     RBF_RESIDUAL("RBF Trend Çıkarma (Radyal Tabanlı Fonksiyon)"),
     KRIGING_RESIDUAL("Kriging Trend Çıkarma (Ordinary Kriging)"),
     NEAREST_NEIGHBOR("En Yakın Komşu (Hücresel/Mozaik Segmentasyon)"),
+    NATURAL_NEIGHBOR("Doğal Komşu (Sibson/Delaunay İnterpolasyonu)"),
 }
