@@ -47,19 +47,19 @@ enum class StructureProfile(
         label = "Oda",
         typicalSizeMeters = 4.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.NEAREST_NEIGHBOR, FilterType.MORPHOLOGICAL_GRADIENT, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.TRIANGULATION_LINEAR, FilterType.NEAREST_NEIGHBOR, FilterType.MORPHOLOGICAL_GRADIENT, FilterType.LAYER_MEDIUM, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
     ),
     CRYPT(
         label = "Mahzen",
         typicalSizeMeters = 6.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.KRIGING_RESIDUAL, FilterType.RBF_RESIDUAL, FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.MINIMUM_CURVATURE, FilterType.KRIGING_RESIDUAL, FilterType.RBF_RESIDUAL, FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
     ),
     VOID(
         label = "Boşluk (Genel)",
         typicalSizeMeters = 3.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.CONSENSUS_SCORE, FilterType.NATURAL_NEIGHBOR, FilterType.INVERSE_DISTANCE_POWER, FilterType.WAVELET_DETAIL, FilterType.RX_MULTIBAND_LOCAL, FilterType.STANDARD_DEVIATION, FilterType.GLCM_CONTRAST, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
+        recommendedFilters = listOf(FilterType.CONSENSUS_SCORE, FilterType.NATURAL_NEIGHBOR, FilterType.POLYNOMIAL_REGRESSION, FilterType.INVERSE_DISTANCE_POWER, FilterType.MOVING_AVERAGE, FilterType.WAVELET_DETAIL, FilterType.RX_MULTIBAND_LOCAL, FilterType.STANDARD_DEVIATION, FilterType.GLCM_CONTRAST, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
     ),
     ENTRANCE(
         label = "Giriş",

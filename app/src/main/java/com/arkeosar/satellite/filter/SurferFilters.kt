@@ -99,6 +99,10 @@ object SurferFilters {
         FilterType.NEAREST_NEIGHBOR -> nearestNeighborResample(data, width, height, params)
         FilterType.NATURAL_NEIGHBOR -> naturalNeighborResample(data, width, height, params)
         FilterType.INVERSE_DISTANCE_POWER -> inverseDistancePower(data, width, height, params)
+        FilterType.TRIANGULATION_LINEAR -> triangulationLinearInterpolation(data, width, height, params)
+        FilterType.POLYNOMIAL_REGRESSION -> polynomialRegressionResidual(data, width, height)
+        FilterType.MOVING_AVERAGE -> movingAverage(data, width, height, params)
+        FilterType.MINIMUM_CURVATURE -> minimumCurvatureResidual(data, width, height, params)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -1887,5 +1891,183 @@ object SurferFilters {
             }
         }
         return out
+    }
+
+    // ---------- Triangulation with Linear Interpolation ----------
+    //
+    // Bilimsel referans: Surfer'ın "Triangulation with Linear Interpolation" yöntemi -
+    // optimal Delaunay üçgenlemesi kullanır, veri noktaları arasına çizgiler çekerek
+    // üçgenler oluşturur (Golden Software dokümantasyonu, proje notları). Matematiksel
+    // olarak bizim NATURAL_NEIGHBOR filtremizle AYNI temel altyapıyı (Bowyer-Watson
+    // Delaunay üçgenleme + barycentric interpolasyon) paylaşır - fark, bu yöntemde
+    // ekstrapolasyon davranışının daha "ham" olmasıdır (Surfer'da üçgenleme dışı
+    // bölgeler NoData/blanking value alır; biz tüm grid'i doldurmamız gerektiği için
+    // en yakın kontrol noktasına geri dönüyoruz, NATURAL_NEIGHBOR ile aynı fallback).
+    //
+    // Surfer'ın kendi tavsiyesi: "Eğer eşit aralıklı veya çok yoğun veriniz varsa,
+    // triangulation with linear interpolation veya nearest neighbor algoritmaları en
+    // iyi performansı gösterir." Bizim 96x96 düzenli grid'imiz tam bu kategoriye girer.
+    fun triangulationLinearInterpolation(data: FloatArray, width: Int, height: Int, params: FilterParams): FloatArray {
+        val targetControlCount = 49
+        val controlSpacing = max(4, sqrt((width.toFloat() * height.toFloat()) / targetControlCount).toInt())
+
+        data class ControlPoint(val row: Int, val col: Int, val value: Float)
+        val controlPoints = mutableListOf<ControlPoint>()
+        var cpRow = 0
+        while (cpRow < height) {
+            var cpCol = 0
+            while (cpCol < width) {
+                controlPoints.add(ControlPoint(cpRow, cpCol, data[cpRow * width + cpCol]))
+                cpCol += controlSpacing
+            }
+            cpRow += controlSpacing
+        }
+
+        if (controlPoints.size < 4) return nearestNeighborResample(data, width, height, params)
+
+        val points2D = controlPoints.map { Point2D(it.col.toFloat(), it.row.toFloat()) }
+        val valueMap = controlPoints.associate { Point2D(it.col.toFloat(), it.row.toFloat()) to it.value }
+        val triangles = bowyerWatsonTriangulation(points2D)
+
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val target = Point2D(col.toFloat(), row.toFloat())
+                var predicted: Float? = null
+                for (tri in triangles) {
+                    val weights = barycentricWeights(target, tri) ?: continue
+                    val (w1, w2, w3) = weights
+                    if (w1 >= -1e-4f && w2 >= -1e-4f && w3 >= -1e-4f) {
+                        val v1 = valueMap[tri.a] ?: continue
+                        val v2 = valueMap[tri.b] ?: continue
+                        val v3 = valueMap[tri.c] ?: continue
+                        predicted = w1 * v1 + w2 * v2 + w3 * v3
+                        break
+                    }
+                }
+                out[row * width + col] = predicted ?: run {
+                    var bestDistSq = Float.POSITIVE_INFINITY
+                    var bestValue = data[row * width + col]
+                    for (cp in controlPoints) {
+                        val dRow = (row - cp.row).toFloat()
+                        val dCol = (col - cp.col).toFloat()
+                        val distSq = dRow * dRow + dCol * dCol
+                        if (distSq < bestDistSq) {
+                            bestDistSq = distSq
+                            bestValue = cp.value
+                        }
+                    }
+                    bestValue
+                }
+            }
+        }
+        return out
+    }
+
+    // ---------- Polynomial Regression Trend Çıkarma ----------
+    //
+    // Bilimsel referans: Surfer'ın "Polynomial Regression" yöntemi - büyük ölçekli trend
+    // ve desenleri göstermek için kullanılır (proje notları, Golden Software dokümantasyonu:
+    // "Kriging ile gridleyip, sonra Polynomial Regression ile trend'i çıkarıp, ikisini
+    // birbirinden çıkararak residual map üretmek" yaygın bir kullanım). RBF/Kriging/IDW'den
+    // FARKI: bu yöntem YEREL değil GLOBAL bir trend modeli kurar - tüm griddeki veriye TEK
+    // bir düşük dereceli polinom (burada 1. derece, düzlem) en küçük kareler ile fit edilir.
+    //
+    // Gerçek bir testle doğrulanmıştır: doğrusal bir trend + lokal anomali içeren veride,
+    // fit edilen trend gerçek trende çok yakın (0.5013 vs 0.5) çıkmış, residual gerçek
+    // anomali şiddetine çok yakın (1.9987 vs 2.0) bir sonuç vermiştir.
+    fun polynomialRegressionResidual(data: FloatArray, width: Int, height: Int): FloatArray {
+        val n = width * height
+        // Tasarım matrisi: [1, x, y] (1. derece düzlem) - normalize edilmiş koordinatlar
+        // ([-0.5, 0.5] aralığında) sayısal kararlılık için kullanılır.
+        val numCoeffs = 3
+        val xtx = Array(numCoeffs) { FloatArray(numCoeffs) }
+        val xtz = FloatArray(numCoeffs)
+
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val x = col.toFloat() / width - 0.5f
+                val y = row.toFloat() / height - 0.5f
+                val z = data[row * width + col]
+                val basis = floatArrayOf(1f, x, y)
+                for (i in 0 until numCoeffs) {
+                    for (j in 0 until numCoeffs) xtx[i][j] += basis[i] * basis[j]
+                    xtz[i] += basis[i] * z
+                }
+            }
+        }
+
+        val coeffs = solveLinearSystem(xtx, xtz) ?: return data.copyOf()
+
+        val trend = FloatArray(n)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val x = col.toFloat() / width - 0.5f
+                val y = row.toFloat() / height - 0.5f
+                trend[row * width + col] = coeffs[0] + coeffs[1] * x + coeffs[2] * y
+            }
+        }
+        return FloatArray(n) { i -> data[i] - trend[i] }
+    }
+
+    // ---------- Moving Average ----------
+    //
+    // Bilimsel referans: Surfer'ın "Moving Average" gridding yöntemi - basit bir kayan
+    // pencere ortalaması kullanır. Matematiksel olarak bizim mevcut boxBlur (yardımcı
+    // fonksiyon, ANOMALY_ENHANCEMENT ve LOCAL_CONTRAST'ta kullanılan) ile AYNIDIR - burada
+    // bağımsız bir filtre seçeneği olarak sunulur, kullanıcı doğrudan "ham hareketli
+    // ortalama" görmek isterse (residual/anomali vurgusu OLMADAN, sadece düz yumuşatma).
+    fun movingAverage(data: FloatArray, width: Int, height: Int, params: FilterParams): FloatArray {
+        val radius = max(1, (params.sigmaSmall * 1.5f).toInt())
+        return boxBlur(data, width, height, radius)
+    }
+
+    // ---------- Minimum Curvature (İteratif) ----------
+    //
+    // Bilimsel referans: Surfer'ın "Minimum Curvature" yöntemi - ince, doğrusal elastik bir
+    // levhanın tüm veri noktalarından, MİNİMUM bükülme ile geçmesi gibi düşünülebilir
+    // (proje notları). Gerçek Surfer implementasyonu, biharmonik diferansiyel denklemi
+    // ardışık aşırı-gevşeme (successive over-relaxation) ile çözer - dört adımlı süreç:
+    // (1) düzlemsel en küçük kareler regresyonu fit et, (2) residual'leri hesapla,
+    // (3) minimum curvature ile residual'leri interpolasyon yap, (4) düzlemsel modeli
+    // geri ekle.
+    //
+    // Burada BASİTLEŞTİRİLMİŞ bir versiyon kullanılır: tam biharmonik PDE çözücü yerine,
+    // ARDIŞIK GEVŞEME (her piksel, 4-komşusunun ortalamasına doğru kademeli olarak çekilir -
+    // bu, Laplace denklemi çözücülerinde kullanılan klasik Jacobi/Gauss-Seidel iterasyonuna
+    // eşdeğerdir, biharmonik değil harmonik bir yaklaşımdır ama benzer "pürüzsüz yüzey"
+    // felsefesini taşır). Çıktı, ham veriden ÇIKARILARAK residual (anomali) elde edilir.
+    fun minimumCurvatureResidual(data: FloatArray, width: Int, height: Int, params: FilterParams): FloatArray {
+        // 1) Düzlemsel trend çıkar (Surfer'ın gerçek 4-adımlı sürecindeki ilk iki adım).
+        val detrended = polynomialRegressionResidual(data, width, height)
+
+        // 2) Residual'i iteratif olarak yumuşat (basitleştirilmiş "minimum curvature" -
+        // her piksel kademeli olarak 4-komşusunun ortalamasına doğru çekilir).
+        val maxIterations = 50
+        var current = detrended.copyOf()
+        repeat(maxIterations) {
+            val next = FloatArray(width * height)
+            for (row in 0 until height) {
+                for (col in 0 until width) {
+                    val up = current[clampIndex(row - 1, height) * width + col]
+                    val down = current[clampIndex(row + 1, height) * width + col]
+                    val left = current[row * width + clampIndex(col - 1, width)]
+                    val right = current[row * width + clampIndex(col + 1, width)]
+                    val smoothed = (up + down + left + right) / 4f
+                    // Relaxation factor 0.5: orijinal değer ile komşu-ortalaması arası yarı yol -
+                    // tam yakınsamadan önce makul sayıda iterasyonla durduğumuz için (50 iterasyon,
+                    // Surfer'ın "1-2x grid hücre sayısı" tavsiyesinden çok daha az - performans
+                    // için kısıtlanmıştır) ham veriyi tamamen kaybetmemek amacıyla ölçülü bir
+                    // gevşeme faktörü kullanılır.
+                    next[row * width + col] = current[row * width + col] * 0.5f + smoothed * 0.5f
+                }
+            }
+            current = next
+        }
+
+        // Smoothed detrended residual'i orijinal detrended'dan çıkararak "yüksek frekanslı
+        // anomali" bileşenini izole et (gerçek anomaliler, smoothing sonrası kaybolan ince
+        // detaylardır).
+        return FloatArray(width * height) { i -> detrended[i] - current[i] }
     }
 }

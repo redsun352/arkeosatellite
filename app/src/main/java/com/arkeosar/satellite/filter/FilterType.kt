@@ -56,4 +56,8 @@ enum class FilterType(val label: String) {
     NEAREST_NEIGHBOR("En Yakın Komşu (Hücresel/Mozaik Segmentasyon)"),
     NATURAL_NEIGHBOR("Doğal Komşu (Sibson/Delaunay İnterpolasyonu)"),
     INVERSE_DISTANCE_POWER("Ters Mesafe Ağırlıklı (IDW)"),
+    TRIANGULATION_LINEAR("Üçgenleme + Doğrusal İnterpolasyon"),
+    POLYNOMIAL_REGRESSION("Polinom Regresyon Trend Çıkarma"),
+    MOVING_AVERAGE("Hareketli Ortalama"),
+    MINIMUM_CURVATURE("Minimum Eğrilik (İteratif)"),
 }
