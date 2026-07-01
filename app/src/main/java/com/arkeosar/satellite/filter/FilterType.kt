@@ -60,4 +60,6 @@ enum class FilterType(val label: String) {
     POLYNOMIAL_REGRESSION("Polinom Regresyon Trend Çıkarma"),
     MOVING_AVERAGE("Hareketli Ortalama"),
     MINIMUM_CURVATURE("Minimum Eğrilik (İteratif)"),
+    MODIFIED_SHEPARD("Modifiye Shepard Yöntemi (Yerel Quadratic)"),
+    DATA_METRICS_DENSITY("Veri Metriği: Yoğunluk (Kümelenme)"),
 }

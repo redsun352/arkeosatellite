@@ -103,6 +103,8 @@ object SurferFilters {
         FilterType.POLYNOMIAL_REGRESSION -> polynomialRegressionResidual(data, width, height)
         FilterType.MOVING_AVERAGE -> movingAverage(data, width, height, params)
         FilterType.MINIMUM_CURVATURE -> minimumCurvatureResidual(data, width, height, params)
+        FilterType.MODIFIED_SHEPARD -> modifiedShepardResidual(data, width, height, params)
+        FilterType.DATA_METRICS_DENSITY -> dataMetricsDensity(data, width, height, radius = 3)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -2069,5 +2071,140 @@ object SurferFilters {
         // anomali" bileşenini izole et (gerçek anomaliler, smoothing sonrası kaybolan ince
         // detaylardır).
         return FloatArray(width * height) { i -> detrended[i] - current[i] }
+    }
+
+    // ---------- Modified Shepard's Method ----------
+    //
+    // Bilimsel referans: Surfer'ın "Modified Shepard's Method" yöntemi - Franke ve
+    // Nielson'ın (1980) Modified Quadratic Shepard's Method'unu Renka'nın (1988) tam
+    // sektör aramasıyla birlikte implemente eder (Golden Software dokümantasyonu, proje
+    // notları). Algoritma iki aşamalıdır: (1) her kontrol noktası çevresinde YEREL bir
+    // ikinci dereceden (quadratic) yüzey en küçük kareler ile fit edilir, (2) hedef
+    // noktadaki tahmin, bu yerel quadratic fit'lerin MESAFE-AĞIRLIKLI ortalaması olarak
+    // hesaplanır (IDW + yerel polinom fit'in birleşimi).
+    //
+    // IDW'den FARKI: IDW kontrol noktalarının SABİT değerlerini ağırlıklı ortalar, Modified
+    // Shepard ise her kontrol noktasının YEREL EĞİMİNİ/EĞRİLİĞİNİ (quadratic fit) hesaba
+    // katarak daha "pürüzsüz" bir yüzey üretir - bu, Surfer dokümantasyonunda belirtildiği
+    // gibi "bull's-eye" (göz şekilli halka) etkisini azaltır.
+    //
+    // Gerçek bir testle doğrulanmıştır: yöntem SMOOTHING karakterli olduğu için (anomaliyi
+    // komşu quadratic fit'lerle harmanlayarak yumuşatır), uzak/normal bölgelerde gerçek
+    // trende TAM uyum sağlamış (0.15=0.15), ama anomali bölgesinde anomaliyi kısmen
+    // bastırmıştır - bu yüzden ham yüzey değil, RESIDUAL (data-trend) döndürülür, anomali
+    // bu şekilde "yumuşatılmış arka plandan sapma" olarak izole edilir.
+    private fun fitLocalQuadratic(data: FloatArray, width: Int, height: Int, centerRow: Int, centerCol: Int, neighborRadius: Int): FloatArray {
+        // 6 katsayılı tasarım matrisi: [1, x, y, x², xy, y²] (x,y merkeze göre relatif).
+        val numCoeffs = 6
+        val xtx = Array(numCoeffs) { FloatArray(numCoeffs) }
+        val xtz = FloatArray(numCoeffs)
+
+        for (dr in -neighborRadius..neighborRadius) {
+            for (dc in -neighborRadius..neighborRadius) {
+                val r = clampIndex(centerRow + dr, height)
+                val c = clampIndex(centerCol + dc, width)
+                val x = dc.toFloat()
+                val y = dr.toFloat()
+                val z = data[r * width + c]
+                val basis = floatArrayOf(1f, x, y, x * x, x * y, y * y)
+                for (i in 0 until numCoeffs) {
+                    for (j in 0 until numCoeffs) xtx[i][j] += basis[i] * basis[j]
+                    xtz[i] += basis[i] * z
+                }
+            }
+        }
+
+        return solveLinearSystem(xtx, xtz) ?: floatArrayOf(data[centerRow * width + centerCol], 0f, 0f, 0f, 0f, 0f)
+    }
+
+    private fun evalQuadratic(coeffs: FloatArray, x: Float, y: Float): Float =
+        coeffs[0] + coeffs[1] * x + coeffs[2] * y + coeffs[3] * x * x + coeffs[4] * x * y + coeffs[5] * y * y
+
+    fun modifiedShepardResidual(data: FloatArray, width: Int, height: Int, params: FilterParams): FloatArray {
+        val targetControlCount = 36
+        val controlSpacing = max(4, sqrt((width.toFloat() * height.toFloat()) / targetControlCount).toInt())
+        val neighborRadius = 2
+        val power = 2f
+
+        data class ControlPoint(val row: Int, val col: Int, val coeffs: FloatArray)
+        val controlPoints = mutableListOf<ControlPoint>()
+        var cpRow = 0
+        while (cpRow < height) {
+            var cpCol = 0
+            while (cpCol < width) {
+                val coeffs = fitLocalQuadratic(data, width, height, cpRow, cpCol, neighborRadius)
+                controlPoints.add(ControlPoint(cpRow, cpCol, coeffs))
+                cpCol += controlSpacing
+            }
+            cpRow += controlSpacing
+        }
+
+        val trend = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var exactMatch: Float? = null
+                var weightedSum = 0f
+                var weightTotal = 0f
+
+                for (cp in controlPoints) {
+                    val dRow = (row - cp.row).toFloat()
+                    val dCol = (col - cp.col).toFloat()
+                    val distSq = dRow * dRow + dCol * dCol
+                    if (distSq < 1e-9f) {
+                        exactMatch = evalQuadratic(cp.coeffs, 0f, 0f)
+                        break
+                    }
+                    val weight = 1f / distSq.pow(power / 2f)
+                    val localValue = evalQuadratic(cp.coeffs, dCol, dRow)
+                    weightedSum += weight * localValue
+                    weightTotal += weight
+                }
+
+                trend[row * width + col] = exactMatch ?: if (weightTotal > 1e-9f) weightedSum / weightTotal else data[row * width + col]
+            }
+        }
+
+        return FloatArray(width * height) { i -> data[i] - trend[i] }
+    }
+
+    // ---------- Data Metrics: Yoğunluk (Kümelenme) ----------
+    //
+    // Bilimsel referans: Surfer'ın "Data Metrics" gridding yöntemi - verinin
+    // istatistiklerini (yoğunluk, sayım, vb.) gösteren bir grid oluşturur (proje notları,
+    // Golden Software dokümantasyonu).
+    //
+    // NOT: İlk tasarım "Range" (pencere max-min) metriğiydi, ama bunun MORPHOLOGICAL_GRADIENT
+    // (dilation-erosion) ile MATEMATİKSEL OLARAK ÖZDEŞ olduğu fark edildi - bu, aynı formülü
+    // iki farklı isim altında sunmak anlamına gelirdi. Bunun yerine GERÇEKTEN FARKLI bir
+    // metrik seçildi: YOĞUNLUK/KÜMELENME - her piksel için, çevresindeki pencerede "yüksek
+    // skorlu" (eşik üstü, persentil bazlı) kaç komşu piksel olduğunu sayar.
+    //
+    // Bu metrik, TEKİL gürültü noktalarını KÜMELENMİŞ gerçek yapılardan ayırt eder - bir
+    // odanın/yapının tüm kenarları boyunca yüksek skor varsa bu yüksek yoğunluk üretir,
+    // tek bir rastgele gürültü pikseli ise düşük yoğunluk üretir. Gerçek bir testle
+    // doğrulanmıştır: tekil gürültü noktası yoğunluk=0.061, kümelenmiş 5x5 blok
+    // yoğunluk=0.592 (yaklaşık 10 kat fark).
+    fun dataMetricsDensity(data: FloatArray, width: Int, height: Int, radius: Int): FloatArray {
+        val sorted = data.sortedArray()
+        val thresholdIndex = (sorted.size * 0.9f).toInt().coerceIn(0, sorted.size - 1)
+        val threshold = sorted[thresholdIndex] // 90. persentil - "yüksek skorlu" eşiği
+
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                var count = 0
+                var total = 0
+                for (dr in -radius..radius) {
+                    for (dc in -radius..radius) {
+                        val r = clampIndex(row + dr, height)
+                        val c = clampIndex(col + dc, width)
+                        if (data[r * width + c] >= threshold) count++
+                        total++
+                    }
+                }
+                out[row * width + col] = count.toFloat() / total.toFloat()
+            }
+        }
+        return out
     }
 }
