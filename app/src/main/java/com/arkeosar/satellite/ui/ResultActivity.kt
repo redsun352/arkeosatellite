@@ -256,7 +256,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         // USGS/Planet kullanılmışsa) sessizce ham skora geri döner (kullanıcıya bilgi vermek
         // için status mesajı da gösterilir, ama HER ZAMAN renderSummaryText ile SIFIRDAN
         // yazılır - bir önceki filtre denemesinden kalma mesaj asla birikmez).
-        val multiBandFilters = setOf(FilterType.PCA_FUSION, FilterType.RX_MULTIBAND_GLOBAL, FilterType.RX_MULTIBAND_LOCAL)
+        val multiBandFilters = setOf(FilterType.PCA_FUSION, FilterType.RX_MULTIBAND_GLOBAL, FilterType.RX_MULTIBAND_LOCAL, FilterType.COKRIGING)
         val filteredScores = if (currentFilter in multiBandFilters) {
             val ndvi = grid.rawNdvi
             val ndwi = grid.rawNdwi
@@ -266,7 +266,8 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
                     FilterType.PCA_FUSION -> SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
                     FilterType.RX_MULTIBAND_GLOBAL -> SurferFilters.rxMultiBandGlobal(ndvi, ndwi)
                     FilterType.RX_MULTIBAND_LOCAL -> SurferFilters.rxMultiBandLocal(ndvi, ndwi, grid.width, grid.height, radius = 4)
-                    else -> grid.scores.copyOf() // ulaşılamaz dal, exhaustive when için
+                    FilterType.COKRIGING -> SurferFilters.cokrigingPredict(ndvi, ndwi, grid.width, grid.height)
+                    else -> grid.scores.copyOf()
                 }
             } else {
                 renderSummaryText(filterWarning = getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))

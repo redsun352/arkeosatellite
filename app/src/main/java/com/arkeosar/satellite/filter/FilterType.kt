@@ -62,4 +62,5 @@ enum class FilterType(val label: String) {
     MINIMUM_CURVATURE("Minimum Eğrilik (İteratif)"),
     MODIFIED_SHEPARD("Modifiye Shepard Yöntemi (Yerel Quadratic)"),
     DATA_METRICS_DENSITY("Veri Metriği: Yoğunluk (Kümelenme)"),
+    COKRIGING("Cokriging (NDVI+NDWI Birleşik Tahmin)"),
 }

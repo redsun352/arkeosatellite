@@ -59,7 +59,7 @@ enum class StructureProfile(
         label = "Boşluk (Genel)",
         typicalSizeMeters = 3.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.CONSENSUS_SCORE, FilterType.DATA_METRICS_DENSITY, FilterType.NATURAL_NEIGHBOR, FilterType.MODIFIED_SHEPARD, FilterType.POLYNOMIAL_REGRESSION, FilterType.INVERSE_DISTANCE_POWER, FilterType.MOVING_AVERAGE, FilterType.WAVELET_DETAIL, FilterType.RX_MULTIBAND_LOCAL, FilterType.STANDARD_DEVIATION, FilterType.GLCM_CONTRAST, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
+        recommendedFilters = listOf(FilterType.CONSENSUS_SCORE, FilterType.COKRIGING, FilterType.DATA_METRICS_DENSITY, FilterType.NATURAL_NEIGHBOR, FilterType.MODIFIED_SHEPARD, FilterType.POLYNOMIAL_REGRESSION, FilterType.INVERSE_DISTANCE_POWER, FilterType.MOVING_AVERAGE, FilterType.WAVELET_DETAIL, FilterType.RX_MULTIBAND_LOCAL, FilterType.STANDARD_DEVIATION, FilterType.GLCM_CONTRAST, FilterType.LAYER_MEDIUM, FilterType.MULTISCALE_BLOB, FilterType.RX_MULTIBAND_GLOBAL, FilterType.ANOMALY_ENHANCEMENT, FilterType.BAND_PASS)
     ),
     ENTRANCE(
         label = "Giriş",
