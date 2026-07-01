@@ -55,4 +55,5 @@ enum class FilterType(val label: String) {
     KRIGING_RESIDUAL("Kriging Trend Çıkarma (Ordinary Kriging)"),
     NEAREST_NEIGHBOR("En Yakın Komşu (Hücresel/Mozaik Segmentasyon)"),
     NATURAL_NEIGHBOR("Doğal Komşu (Sibson/Delaunay İnterpolasyonu)"),
+    INVERSE_DISTANCE_POWER("Ters Mesafe Ağırlıklı (IDW)"),
 }
