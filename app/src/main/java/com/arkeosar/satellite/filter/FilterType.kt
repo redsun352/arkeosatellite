@@ -51,4 +51,5 @@ enum class FilterType(val label: String) {
     COMPASS_GRADIENT("Pusula Gradyanı (8 Yön)"),
     CONSENSUS_SCORE("Konsensüs Skoru (Çoklu Filtre Oylaması)"),
     WAVELET_DETAIL("Wavelet Detay Katsayısı (Haar)"),
+    RBF_RESIDUAL("RBF Trend Çıkarma (Radyal Tabanlı Fonksiyon)"),
 }

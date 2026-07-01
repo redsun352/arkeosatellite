@@ -53,7 +53,7 @@ enum class StructureProfile(
         label = "Mahzen",
         typicalSizeMeters = 6.0,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(FilterType.RBF_RESIDUAL, FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_DEEP, FilterType.ANALYTIC_SIGNAL, FilterType.BAND_PASS, FilterType.LOW_PASS, FilterType.LOCAL_CONTRAST)
     ),
     VOID(
         label = "Boşluk (Genel)",
