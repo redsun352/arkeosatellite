@@ -63,4 +63,6 @@ enum class FilterType(val label: String) {
     MODIFIED_SHEPARD("Modifiye Shepard Yöntemi (Yerel Quadratic)"),
     DATA_METRICS_DENSITY("Veri Metriği: Yoğunluk (Kümelenme)"),
     COKRIGING("Cokriging (NDVI+NDWI Birleşik Tahmin)"),
+    LOCAL_MORANS_I("Yerel Moran's I (LISA Kümeleme)"),
+    GETIS_ORD_GI_STAR("Getis-Ord Gi* (Sıcak Nokta / Hot Spot)"),
 }
