@@ -35,13 +35,43 @@ enum class StructureProfile(
         label = "Mezar",
         typicalSizeMeters = 2.5,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.LOCAL_CONTRAST)
+        recommendedFilters = listOf(
+            FilterType.RX_ANOMALY_DETECTOR,       // Reed-Xiaoli: doğrudan gömülü kalıntı tespitinde kullanılmış (literatür)
+            FilterType.IRON_OXIDE_INDEX,           // Bozunan organik madde → demir oksit izleri
+            FilterType.PCA_FUSION,                 // Crop mark / soil / vegetation bileşen ayrıştırma (literatür)
+            FilterType.CONSENSUS_SCORE,            // Çoklu bağımsız filtre oylaması → gürültü azaltma
+            FilterType.ANOMALY_ENHANCEMENT,        // Lokal z-score, ince sinyalleri güçlendirir
+            FilterType.GETIS_ORD_GI_STAR,          // Hot spot: mezar gruplarında kümelenme tespiti
+            FilterType.GLCM_CONTRAST,              // Doku analizi (literatürde gömülü anomali tespitinde kullanılmış)
+            FilterType.MORPHOLOGICAL_OPENING,      // Küçük kompakt yapı → gürültü eleme, gerçek yapıyı koru
+            FilterType.STRUCTURE_OUTLINE,          // Canny kenar tespiti, mezar sınırı
+            FilterType.WAVELET_DETAIL,             // Yüksek frekanslı detaylar → ince sınır sinyalleri
+            FilterType.LAYER_SHALLOW,              // Yüzeysel katman (mezar derinliği)
+            FilterType.TILT_DERIVATIVE,            // Jeofizik filtre, kompakt anomalileri dengeler
+            FilterType.RX_MULTIBAND_LOCAL,         // Yerel çok-bantlı anomali tespiti
+            FilterType.BAND_PASS,
+            FilterType.EDGE_ENHANCEMENT,
+            FilterType.LOCAL_CONTRAST
+        )
     ),
     SARCOPHAGUS(
         label = "Lahit",
         typicalSizeMeters = 2.2,
         isElongated = false,
-        recommendedFilters = listOf(FilterType.STRUCTURE_OUTLINE, FilterType.LAYER_SHALLOW, FilterType.TILT_DERIVATIVE, FilterType.BAND_PASS, FilterType.EDGE_ENHANCEMENT, FilterType.GRADIENT)
+        recommendedFilters = listOf(
+            FilterType.STRUCTURE_OUTLINE,          // Rijit taş/mermer → net kenar çizgisi
+            FilterType.MORPHOLOGICAL_GRADIENT,     // Kalın kenar (Lahit'in sert sınırı)
+            FilterType.IRON_OXIDE_INDEX,           // Taş mineralojisi + çevre toprak değişimi
+            FilterType.CLAY_MINERAL_RATIO,         // Taş çevresindeki kil mineral alterasyonu
+            FilterType.RX_ANOMALY_DETECTOR,        // Spektral anomali tespiti
+            FilterType.CONSENSUS_SCORE,            // Çoklu filtre oylaması
+            FilterType.NEAREST_NEIGHBOR,           // Net hücresel sınırlar — lahit blok yapısı
+            FilterType.LAYER_SHALLOW,
+            FilterType.TILT_DERIVATIVE,
+            FilterType.BAND_PASS,
+            FilterType.EDGE_ENHANCEMENT,
+            FilterType.GRADIENT
+        )
     ),
     CHAMBER(
         label = "Oda",
