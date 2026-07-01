@@ -257,25 +257,44 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         // için status mesajı da gösterilir, ama HER ZAMAN renderSummaryText ile SIFIRDAN
         // yazılır - bir önceki filtre denemesinden kalma mesaj asla birikmez).
         val multiBandFilters = setOf(FilterType.PCA_FUSION, FilterType.RX_MULTIBAND_GLOBAL, FilterType.RX_MULTIBAND_LOCAL, FilterType.COKRIGING)
-        val filteredScores = if (currentFilter in multiBandFilters) {
-            val ndvi = grid.rawNdvi
-            val ndwi = grid.rawNdwi
-            if (ndvi != null && ndwi != null) {
-                renderSummaryText(filterWarning = null)
-                when (currentFilter) {
-                    FilterType.PCA_FUSION -> SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
-                    FilterType.RX_MULTIBAND_GLOBAL -> SurferFilters.rxMultiBandGlobal(ndvi, ndwi)
-                    FilterType.RX_MULTIBAND_LOCAL -> SurferFilters.rxMultiBandLocal(ndvi, ndwi, grid.width, grid.height, radius = 4)
-                    FilterType.COKRIGING -> SurferFilters.cokrigingPredict(ndvi, ndwi, grid.width, grid.height)
-                    else -> grid.scores.copyOf()
+        val mineralFilters = setOf(FilterType.IRON_OXIDE_INDEX, FilterType.CLAY_MINERAL_RATIO)
+        val filteredScores = when {
+            currentFilter in multiBandFilters -> {
+                val ndvi = grid.rawNdvi
+                val ndwi = grid.rawNdwi
+                if (ndvi != null && ndwi != null) {
+                    renderSummaryText(filterWarning = null)
+                    when (currentFilter) {
+                        FilterType.PCA_FUSION -> SurferFilters.pcaAnomalyFusion(ndvi, ndwi)
+                        FilterType.RX_MULTIBAND_GLOBAL -> SurferFilters.rxMultiBandGlobal(ndvi, ndwi)
+                        FilterType.RX_MULTIBAND_LOCAL -> SurferFilters.rxMultiBandLocal(ndvi, ndwi, grid.width, grid.height, radius = 4)
+                        FilterType.COKRIGING -> SurferFilters.cokrigingPredict(ndvi, ndwi, grid.width, grid.height)
+                        else -> grid.scores.copyOf()
+                    }
+                } else {
+                    renderSummaryText(filterWarning = getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))
+                    grid.scores.copyOf()
                 }
-            } else {
-                renderSummaryText(filterWarning = getString(com.arkeosar.satellite.R.string.error_pca_requires_sentinel))
-                grid.scores.copyOf()
             }
-        } else {
-            renderSummaryText(filterWarning = null)
-            SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height, params)
+            currentFilter in mineralFilters -> {
+                val ioi = grid.rawIoi
+                val cmr = grid.rawCmr
+                if (ioi != null && cmr != null) {
+                    renderSummaryText(filterWarning = null)
+                    when (currentFilter) {
+                        FilterType.IRON_OXIDE_INDEX -> ioi.copyOf()
+                        FilterType.CLAY_MINERAL_RATIO -> cmr.copyOf()
+                        else -> grid.scores.copyOf()
+                    }
+                } else {
+                    renderSummaryText(filterWarning = "Mineral analizi için Sentinel-2 (B02+B11+B12 içeren) veri gereklidir. Analizi yeniden çalıştırın.")
+                    grid.scores.copyOf()
+                }
+            }
+            else -> {
+                renderSummaryText(filterWarning = null)
+                SurferFilters.apply(currentFilter, grid.scores, grid.width, grid.height, params)
+            }
         }
 
         // 3D yüzeyi güncelle - filtrelenmiş skorlar [0,1] aralığını aşabilir (örn. Laplacian,

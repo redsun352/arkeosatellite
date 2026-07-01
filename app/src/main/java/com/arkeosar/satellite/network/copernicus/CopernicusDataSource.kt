@@ -13,16 +13,19 @@ import retrofit2.create
 import java.util.concurrent.TimeUnit
 
 /**
- * Copernicus Data Space / Sentinel Hub Process API üzerinden Sentinel-2 NDVI+NDWI verisi çeker.
+ * Copernicus Data Space / Sentinel Hub Process API üzerinden Sentinel-2 NDVI+NDWI+IOI+CMR
+ * verisi çeker.
  *
  * Akış:
  *  1. client_id/client_secret ile OAuth2 token al (1 saat geçerli, cache'lenir)
  *  2. Process API'ye evalscript + bbox + zaman aralığı ile POST isteği gönder
- *  3. Dönen 2-bantlı GeoTIFF'i (NDVI + NDWI/NIR-SWIR) ayrıştır -> BandRaster'lar
+ *  3. Dönen 4-bantlı GeoTIFF'i (NDVI + NDWI + IOI + CMR) ayrıştır -> BandRaster'lar
  *
- * Tarih aralığı artık "son N gün" değil, çağıran kodun (MainActivity'deki mevsim
- * seçici) belirlediği MUTLAK bir aralıktır - çünkü crop-mark/bitki stresi tespiti
- * mevsime çok bağımlıdır (bkz. AnalysisOrchestrator dokümantasyonu).
+ * 4 bant:
+ *  - NDVI: bitki/toprak aktivitesi
+ *  - NDWI: nem/drenaj (crop-mark tespiti)
+ *  - IOI (Iron Oxide Index = B04/B02): demir oksit göstergesi - metal kimyasal izi
+ *  - CMR (Clay Mineral Ratio = B11/B12): kil mineral/alterasyon göstergesi
  */
 class CopernicusDataSource : SatelliteDataSource {
 
@@ -74,7 +77,7 @@ class CopernicusDataSource : SatelliteDataSource {
                 )
             ),
             output = ProcessOutput(width = 512, height = 512),
-            evalscript = Evalscripts.ndviAndNdwi
+            evalscript = Evalscripts.ndviNdwiIoiCmr
         )
 
         val response = processApi.process(bearerToken = "Bearer $token", request = request)
@@ -90,7 +93,7 @@ class CopernicusDataSource : SatelliteDataSource {
         val bandRasters = com.arkeosar.satellite.gis.GeoTiffDecoder.decodeMultiBand(
             tiffBytes = tiffBytes,
             bbox = bbox,
-            bandNames = listOf("NDVI", "NDWI")
+            bandNames = listOf("NDVI", "NDWI", "IOI", "CMR")
         )
 
         SourceScene(

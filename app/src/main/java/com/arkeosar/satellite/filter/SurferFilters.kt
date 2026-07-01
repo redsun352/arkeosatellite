@@ -111,6 +111,11 @@ object SurferFilters {
         FilterType.COKRIGING -> anomalyEnhancement(data, width, height)
         FilterType.LOCAL_MORANS_I -> localMoransI(data, width, height, radius = 2)
         FilterType.GETIS_ORD_GI_STAR -> getisOrdGiStar(data, width, height, radius = 2)
+        // IOI ve CMR çok-bantlı filtrelerdir (rawIoi/rawCmr gerektirir).
+        // ResultActivity'de özel dal tarafından ele alınır; bu fallback sadece
+        // IOI/CMR verisi mevcut değilse ulaşılır.
+        FilterType.IRON_OXIDE_INDEX -> anomalyEnhancement(data, width, height)
+        FilterType.CLAY_MINERAL_RATIO -> anomalyEnhancement(data, width, height)
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)

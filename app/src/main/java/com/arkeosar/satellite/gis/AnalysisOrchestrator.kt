@@ -126,11 +126,16 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         val sentinelScene = scenes.firstOrNull { it.source == SatelliteSource.SENTINEL_2 }
         val ndviRaster = sentinelScene?.bands?.get("NDVI")
         val ndwiRaster = sentinelScene?.bands?.get("NDWI")
+        val ioiRaster  = sentinelScene?.bands?.get("IOI")
+        val cmrRaster  = sentinelScene?.bands?.get("CMR")
         val hasNdviNdwi = ndviRaster != null && ndwiRaster != null
+        val hasIoiCmr   = ioiRaster != null && cmrRaster != null
 
         val heightmapScores = FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE)
         val rawNdviGrid = if (hasNdviNdwi) FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
         val rawNdwiGrid = if (hasNdviNdwi) FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
+        val rawIoiGrid  = if (hasIoiCmr)   FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
+        val rawCmrGrid  = if (hasIoiCmr)   FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
 
         for (gridRow in 0 until HEIGHTMAP_GRID_SIZE) {
             for (gridCol in 0 until HEIGHTMAP_GRID_SIZE) {
@@ -155,6 +160,12 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
                     rawNdviGrid!![gridIndex] = ndvi
                     rawNdwiGrid!![gridIndex] = ndwi
                 }
+                if (hasIoiCmr) {
+                    val ioi = sampleNearest(ioiRaster!!, referenceRaster, row, col) ?: 1f
+                    val cmr = sampleNearest(cmrRaster!!, referenceRaster, row, col) ?: 1f
+                    rawIoiGrid!![gridIndex] = ioi
+                    rawCmrGrid!![gridIndex] = cmr
+                }
             }
         }
         val heightmap = HeightmapGrid(
@@ -162,7 +173,9 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
             height = HEIGHTMAP_GRID_SIZE,
             scores = heightmapScores,
             rawNdvi = rawNdviGrid,
-            rawNdwi = rawNdwiGrid
+            rawNdwi = rawNdwiGrid,
+            rawIoi  = rawIoiGrid,
+            rawCmr  = rawCmrGrid
         )
 
         return cells to heightmap

@@ -104,4 +104,41 @@ object Evalscripts {
           return [ndvi, ndwi];
         }
     """.trimIndent()
+
+    /**
+     * 4 bantlı mineral analiz evalscript:
+     *  Bant 0: NDVI  = (B08-B04)/(B08+B04)  — bitki/toprak aktivitesi
+     *  Bant 1: NDWI  = (B08-B11)/(B08+B11)  — nem/drenaj
+     *  Bant 2: IOI   = B04/B02               — Iron Oxide Index (demir oksit göstergesi)
+     *  Bant 3: CMR   = B11/B12               — Clay Mineral Ratio (kil/alterasyon göstergesi)
+     *
+     * Bilimsel referans:
+     *  - IOI (B4/B2): Van der Meer et al. (2014), demir oksit/hidroksit haritalama için
+     *    standart Sentinel-2 bant oranı. Demir oksit varlığında B04(kırmızı) reflektansı
+     *    artar, B02(mavi) azalır → oran yükselir. Metal objelerin çevresindeki toprağın
+     *    zamanla kimyasal değişimine (paslanma/oksitlenme) duyarlıdır.
+     *  - CMR (B11/B12): Van der Meer et al. (2014), kil mineral ve hidrotermal alterasyon
+     *    haritalama. Kil mineralleri B11'de absorpsiyon özelliği gösterir → oran yükselir.
+     *
+     * Bu bantlar B02 ve B12 gerektirdiğinden AYRI bir API çağrısı gerektirir - mevcut
+     * ndviAndNdwi çağrısıyla AYNI anda gönderilmez (Sentinel Hub paralel istek sınırı
+     * nedeniyle ayrı bir zaman diliminde çekilir ve isteğe bağlı bir ek analiz adımı
+     * olarak sunulur).
+     */
+    val ndviNdwiIoiCmr = """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B02", "B04", "B08", "B11", "B12"],
+            output: { bands: 4, sampleType: "FLOAT32" }
+          };
+        }
+        function evaluatePixel(sample) {
+          let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+          let ndwi = (sample.B08 - sample.B11) / (sample.B08 + sample.B11);
+          let ioi  = sample.B04 / Math.max(sample.B02, 0.0001);
+          let cmr  = sample.B11 / Math.max(sample.B12, 0.0001);
+          return [ndvi, ndwi, ioi, cmr];
+        }
+    """.trimIndent()
 }

@@ -65,4 +65,6 @@ enum class FilterType(val label: String) {
     COKRIGING("Cokriging (NDVI+NDWI Birleşik Tahmin)"),
     LOCAL_MORANS_I("Yerel Moran's I (LISA Kümeleme)"),
     GETIS_ORD_GI_STAR("Getis-Ord Gi* (Sıcak Nokta / Hot Spot)"),
+    IRON_OXIDE_INDEX("Demir Oksit İndeksi (IOI - Metal İzi)"),
+    CLAY_MINERAL_RATIO("Kil Mineral Oranı (CMR - Alterasyon)"),
 }

@@ -72,13 +72,20 @@ data class AnomalyCell(
  * normalize edilmemiş) bant değerleri de ayrı ayrı taşınır - PCA Veri Füzyonu filtresi
  * (bkz. SurferFilters.pcaAnomalyFusion) gibi ÇOK BANTLI işlem yapan filtreler için
  * gereklidir; tek bantlı filtreler (Gaussian, Median, vb.) sadece `scores`'u kullanır.
+ *
+ * rawIoi/rawCmr: Sentinel-2'den 4 bantlı (ndviNdwiIoiCmr) evalscript kullanıldığında
+ * elde edilen HAM mineral indeks değerleri:
+ *  - rawIoi: Iron Oxide Index = B04/B02 — demir oksit göstergesi (metal kimyasal izi)
+ *  - rawCmr: Clay Mineral Ratio = B11/B12 — kil mineral alterasyon göstergesi
  */
 data class HeightmapGrid(
     val width: Int,
     val height: Int,
     val scores: FloatArray, // 0.0 - 1.0, boyut = width * height
     val rawNdvi: FloatArray? = null,
-    val rawNdwi: FloatArray? = null
+    val rawNdwi: FloatArray? = null,
+    val rawIoi: FloatArray? = null,
+    val rawCmr: FloatArray? = null
 )
 
 data class AnalysisResult(
