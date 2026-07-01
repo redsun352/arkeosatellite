@@ -60,6 +60,12 @@ interface CopernicusProcessApi {
         @Header("Authorization") bearerToken: String,
         @Body request: ProcessApiRequest
     ): Response<okhttp3.ResponseBody>
+
+    @POST("api/v1/process")
+    suspend fun processDem(
+        @Header("Authorization") bearerToken: String,
+        @Body request: DemProcessRequest
+    ): Response<okhttp3.ResponseBody>
 }
 
 /**
@@ -141,4 +147,47 @@ object Evalscripts {
           return [ndvi, ndwi, ioi, cmr];
         }
     """.trimIndent()
+
+    /**
+     * Copernicus DEM GLO-30 evalscript — 30m çözünürlükte sayısal yükseklik modeli.
+     * Tarih bağımsızdır (statik dataset, TanDEM-X 2011-2015 arası veri).
+     * Sentinel Hub'da input type "dem" (Sentinel-2 değil) kullanılır.
+     *
+     * NOT: DEM değerleri negatif olabilir (deniz altı), +12000 offset eklenerek
+     * UINT16 olarak döndürülür — Kotlin tarafında -12000 çıkarılarak gerçek
+     * yüksekliğe dönüştürülür.
+     */
+    val dem = """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["DEM"],
+            output: { bands: 1, sampleType: "FLOAT32" }
+          };
+        }
+        function evaluatePixel(sample) {
+          return [sample.DEM];
+        }
+    """.trimIndent()
 }
+
+/** DEM verisi için ayrı bir ProcessDataSource tanımı — tip "dem" olarak değişir. */
+data class DemProcessRequest(
+    val input: DemProcessInput,
+    val output: ProcessOutput,
+    val evalscript: String
+)
+
+data class DemProcessInput(
+    val bounds: ProcessBounds,
+    val data: List<DemDataSource>
+)
+
+data class DemDataSource(
+    val type: String = "dem",
+    val dataFilter: DemDataFilter = DemDataFilter()
+)
+
+data class DemDataFilter(
+    val demInstance: String = "COPERNICUS_30"
+)

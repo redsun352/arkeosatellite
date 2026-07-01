@@ -67,4 +67,7 @@ enum class FilterType(val label: String) {
     GETIS_ORD_GI_STAR("Getis-Ord Gi* (Sıcak Nokta / Hot Spot)"),
     IRON_OXIDE_INDEX("Demir Oksit İndeksi (IOI - Metal İzi)"),
     CLAY_MINERAL_RATIO("Kil Mineral Oranı (CMR - Alterasyon)"),
+    DEM_SLOPE("Egim (DEM Slope)"),
+    DEM_HILLSHADE("Gölgeli Kabartma (DEM Hillshade)"),
+    DEM_CURVATURE("Yüzey Eğriliği (DEM Curvature)"),
 }

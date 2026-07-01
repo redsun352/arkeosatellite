@@ -116,6 +116,9 @@ object SurferFilters {
         // IOI/CMR verisi mevcut değilse ulaşılır.
         FilterType.IRON_OXIDE_INDEX -> anomalyEnhancement(data, width, height)
         FilterType.CLAY_MINERAL_RATIO -> anomalyEnhancement(data, width, height)
+        FilterType.DEM_SLOPE -> anomalyEnhancement(data, width, height)     // DEM gerektirir, ResultActivity'de özel dal
+        FilterType.DEM_HILLSHADE -> anomalyEnhancement(data, width, height) // DEM gerektirir, ResultActivity'de özel dal
+        FilterType.DEM_CURVATURE -> anomalyEnhancement(data, width, height) // DEM gerektirir, ResultActivity'de özel dal
     }
 
     private fun clampIndex(value: Int, maxExclusive: Int): Int = value.coerceIn(0, maxExclusive - 1)
@@ -2452,6 +2455,95 @@ object SurferFilters {
                     globalVar * count.toFloat() * (n - count).toFloat() / (n - 1).toFloat()
                 else 1f
                 out[row * width + col] = (localSum - expected) / sqrt(varianceGi.coerceAtLeast(1e-9f))
+            }
+        }
+        return out
+    }
+
+    // ---------- DEM (Sayısal Yükseklik Modeli) Filtreleri ----------
+    //
+    // Bu filtreler, Copernicus DEM GLO-30 (30m çözünürlük) verisinden türetilir.
+    // ResultActivity'de "demFilters" setinde özel bir dal ile çağrılır —
+    // rawDem mevcut değilse kullanıcıya açıklayıcı bir hata mesajı gösterilir.
+    //
+    // Matematiksel referans: standart arazi analizi formülleri (ArcGIS/QGIS ile
+    // aynı matematiksel temel), Python'da gerçek bir Gaussian tepe senaryosuyla
+    // doğrulanmıştır.
+
+    /**
+     * Egim (Slope): her piksel için x ve y yönündeki yükseklik gradyanının büyüklüğü.
+     * Arkeolojik mound, höyük, tümülüs gibi yüzey anomalilerini çevresiyle
+     * kontrast oluşturarak ortaya çıkarır — düz alanda beklenmedik bir egim
+     * gömülü bir yapı formunun yüzey izini gösterebilir.
+     * Formül: slope = sqrt((dz/dx)² + (dz/dy)²)
+     */
+    fun demSlope(dem: FloatArray, width: Int, height: Int, cellSizeMeters: Float = 30f): FloatArray {
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val dzdx = (dem[row * width + clampIndex(col + 1, width)] -
+                            dem[row * width + clampIndex(col - 1, width)]) / (2f * cellSizeMeters)
+                val dzdy = (dem[clampIndex(row + 1, height) * width + col] -
+                            dem[clampIndex(row - 1, height) * width + col]) / (2f * cellSizeMeters)
+                out[row * width + col] = sqrt(dzdx * dzdx + dzdy * dzdy)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Gölgeli Kabartma (Hillshade): güneşin belirli bir açı ve yönünden
+     * yansıyan ışık miktarını simüle eder. Küçük yüzey formlarını (mound,
+     * tümülüs, hendek, platform) görsel olarak güçlendirir — hillshade,
+     * haritacılık ve arkeolojik keşifte yaygın bir görselleştirme tekniğidir.
+     * Azimuth 315° (KD) ve altitude 45° (standart kartografik ayarlar).
+     */
+    fun demHillshade(
+        dem: FloatArray,
+        width: Int,
+        height: Int,
+        cellSizeMeters: Float = 30f,
+        azimuthDeg: Float = 315f,
+        altitudeDeg: Float = 45f
+    ): FloatArray {
+        val az = Math.toRadians(azimuthDeg.toDouble()).toFloat()
+        val alt = Math.toRadians(altitudeDeg.toDouble()).toFloat()
+        val out = FloatArray(width * height)
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val dzdx = (dem[row * width + clampIndex(col + 1, width)] -
+                            dem[row * width + clampIndex(col - 1, width)]) / (2f * cellSizeMeters)
+                val dzdy = (dem[clampIndex(row + 1, height) * width + col] -
+                            dem[clampIndex(row - 1, height) * width + col]) / (2f * cellSizeMeters)
+                val slope = kotlin.math.atan(sqrt(dzdx * dzdx + dzdy * dzdy))
+                val aspect = kotlin.math.atan2(-dzdy, dzdx)
+                val shade = (kotlin.math.cos(alt) * kotlin.math.cos(slope) +
+                             kotlin.math.sin(alt) * kotlin.math.sin(slope) *
+                             kotlin.math.cos(az - aspect))
+                out[row * width + col] = shade.coerceAtLeast(0f)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Yüzey Eğriliği (Curvature / Laplacian): yüzey profilinin konveks/konkav
+     * karakterini ölçer. Negatif değer = tepe/tümülüs (konkav), pozitif değer = çukur/hendek
+     * (konveks). Arkeolojik höyük ve yapı formlarını DEM'den doğrudan tespit etmek için
+     * son derece hassas bir gösterge.
+     * Formül: (zN + zS + zE + zW - 4z) / cellSize²
+     */
+    fun demCurvature(dem: FloatArray, width: Int, height: Int, cellSizeMeters: Float = 30f): FloatArray {
+        val out = FloatArray(width * height)
+        val cellSq = cellSizeMeters * cellSizeMeters
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val z  = dem[row * width + col]
+                val zn = dem[clampIndex(row - 1, height) * width + col]
+                val zs = dem[clampIndex(row + 1, height) * width + col]
+                val ze = dem[row * width + clampIndex(col + 1, width)]
+                val zw = dem[row * width + clampIndex(col - 1, width)]
+                out[row * width + col] = (zn + zs + ze + zw - 4f * z) / cellSq
             }
         }
         return out

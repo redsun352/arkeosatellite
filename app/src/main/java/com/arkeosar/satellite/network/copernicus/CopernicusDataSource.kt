@@ -96,9 +96,33 @@ class CopernicusDataSource : SatelliteDataSource {
             bandNames = listOf("NDVI", "NDWI", "IOI", "CMR")
         )
 
+        // DEM verisini ayrı bir istek olarak çek (tip "dem", tarih bağımsız).
+        val demRaster = try {
+            val demRequest = DemProcessRequest(
+                input = DemProcessInput(
+                    bounds = ProcessBounds(bbox = listOf(bbox.minLng, bbox.minLat, bbox.maxLng, bbox.maxLat)),
+                    data = listOf(DemDataSource())
+                ),
+                output = ProcessOutput(width = 512, height = 512),
+                evalscript = Evalscripts.dem
+            )
+            val demResponse = processApi.processDem(bearerToken = "Bearer $token", request = demRequest)
+            if (demResponse.isSuccessful) {
+                val demBytes = demResponse.body()?.bytes()
+                if (demBytes != null) {
+                    com.arkeosar.satellite.gis.GeoTiffDecoder.decodeSingleBand(demBytes, bbox, "DEM")
+                } else null
+            } else null
+        } catch (e: Exception) {
+            null // DEM başarısız olursa sessizce atla, ana analiz etkilenmesin
+        }
+
+        val allBands = bandRasters.toMutableMap()
+        if (demRaster != null) allBands["DEM"] = demRaster
+
         SourceScene(
             source = source,
-            bands = bandRasters,
+            bands = allBands,
             acquiredEpochMs = System.currentTimeMillis()
         )
     }

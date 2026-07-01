@@ -36,6 +36,9 @@ enum class StructureProfile(
         typicalSizeMeters = 2.5,
         isElongated = false,
         recommendedFilters = listOf(
+            FilterType.DEM_CURVATURE,              // Tümülüs/höyük = negatif curvature (konkav tepe)
+            FilterType.DEM_HILLSHADE,              // Küçük yüzey formlarını görsel olarak güçlendirir
+            FilterType.DEM_SLOPE,                  // Mezar tepecikleri çevresinde beklenmedik egim
             FilterType.RX_ANOMALY_DETECTOR,       // Reed-Xiaoli: doğrudan gömülü kalıntı tespitinde kullanılmış (literatür)
             FilterType.IRON_OXIDE_INDEX,           // Bozunan organik madde → demir oksit izleri
             FilterType.PCA_FUSION,                 // Crop mark / soil / vegetation bileşen ayrıştırma (literatür)

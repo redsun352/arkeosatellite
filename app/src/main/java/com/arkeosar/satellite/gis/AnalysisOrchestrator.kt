@@ -128,14 +128,17 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
         val ndwiRaster = sentinelScene?.bands?.get("NDWI")
         val ioiRaster  = sentinelScene?.bands?.get("IOI")
         val cmrRaster  = sentinelScene?.bands?.get("CMR")
+        val demRaster  = sentinelScene?.bands?.get("DEM")
         val hasNdviNdwi = ndviRaster != null && ndwiRaster != null
         val hasIoiCmr   = ioiRaster != null && cmrRaster != null
+        val hasDem      = demRaster != null
 
         val heightmapScores = FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE)
         val rawNdviGrid = if (hasNdviNdwi) FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
         val rawNdwiGrid = if (hasNdviNdwi) FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
         val rawIoiGrid  = if (hasIoiCmr)   FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
         val rawCmrGrid  = if (hasIoiCmr)   FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
+        val rawDemGrid  = if (hasDem)       FloatArray(HEIGHTMAP_GRID_SIZE * HEIGHTMAP_GRID_SIZE) else null
 
         for (gridRow in 0 until HEIGHTMAP_GRID_SIZE) {
             for (gridCol in 0 until HEIGHTMAP_GRID_SIZE) {
@@ -166,6 +169,10 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
                     rawIoiGrid!![gridIndex] = ioi
                     rawCmrGrid!![gridIndex] = cmr
                 }
+                if (hasDem) {
+                    val elev = sampleNearest(demRaster!!, referenceRaster, row, col) ?: 0f
+                    rawDemGrid!![gridIndex] = elev
+                }
             }
         }
         val heightmap = HeightmapGrid(
@@ -175,7 +182,8 @@ class AnalysisOrchestrator(private val sources: List<SatelliteDataSource>) {
             rawNdvi = rawNdviGrid,
             rawNdwi = rawNdwiGrid,
             rawIoi  = rawIoiGrid,
-            rawCmr  = rawCmrGrid
+            rawCmr  = rawCmrGrid,
+            rawDem  = rawDemGrid
         )
 
         return cells to heightmap

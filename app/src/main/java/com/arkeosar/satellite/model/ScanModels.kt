@@ -85,7 +85,8 @@ data class HeightmapGrid(
     val rawNdvi: FloatArray? = null,
     val rawNdwi: FloatArray? = null,
     val rawIoi: FloatArray? = null,
-    val rawCmr: FloatArray? = null
+    val rawCmr: FloatArray? = null,
+    val rawDem: FloatArray? = null  // metre cinsinden yükseklik, Copernicus DEM GLO-30 (30m)
 )
 
 data class AnalysisResult(

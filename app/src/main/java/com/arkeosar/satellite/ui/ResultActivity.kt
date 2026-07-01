@@ -258,6 +258,7 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
         // yazılır - bir önceki filtre denemesinden kalma mesaj asla birikmez).
         val multiBandFilters = setOf(FilterType.PCA_FUSION, FilterType.RX_MULTIBAND_GLOBAL, FilterType.RX_MULTIBAND_LOCAL, FilterType.COKRIGING)
         val mineralFilters = setOf(FilterType.IRON_OXIDE_INDEX, FilterType.CLAY_MINERAL_RATIO)
+        val demFilters = setOf(FilterType.DEM_SLOPE, FilterType.DEM_HILLSHADE, FilterType.DEM_CURVATURE)
         val filteredScores = when {
             currentFilter in multiBandFilters -> {
                 val ndvi = grid.rawNdvi
@@ -288,6 +289,21 @@ class ResultActivity : AppCompatActivity(), OnMapReadyCallback {
                     }
                 } else {
                     renderSummaryText(filterWarning = "Mineral analizi için Sentinel-2 (B02+B11+B12 içeren) veri gereklidir. Analizi yeniden çalıştırın.")
+                    grid.scores.copyOf()
+                }
+            }
+            currentFilter in demFilters -> {
+                val dem = grid.rawDem
+                if (dem != null) {
+                    renderSummaryText(filterWarning = null)
+                    when (currentFilter) {
+                        FilterType.DEM_SLOPE -> SurferFilters.demSlope(dem, grid.width, grid.height)
+                        FilterType.DEM_HILLSHADE -> SurferFilters.demHillshade(dem, grid.width, grid.height)
+                        FilterType.DEM_CURVATURE -> SurferFilters.demCurvature(dem, grid.width, grid.height)
+                        else -> grid.scores.copyOf()
+                    }
+                } else {
+                    renderSummaryText(filterWarning = "DEM filtreleri için Copernicus DEM verisi gereklidir. Sentinel-2 analizi yeniden çalıştırın.")
                     grid.scores.copyOf()
                 }
             }
